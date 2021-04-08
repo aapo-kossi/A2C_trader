@@ -1,0 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Dec 12 21:14:53 2020
+
+@author: Aapo Kössi
+"""
+
+#TODO: IMPLEMENT GYM ENV METHODS FOR THE TRAINING DATASET
+#      IN ORDER TO TRAIN THE BASELINES RL ALGORITHMS OUT-OF-THE-BOX

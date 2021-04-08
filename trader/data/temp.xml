@@ -1,0 +1,46 @@
+<data>
+  <num_tickers>10</num_tickers>
+  <ticker_dict>
+    <item name="AAPL">0</item>
+    <item name="AMAT">1</item>
+    <item name="AMD">2</item>
+    <item name="AMZN">3</item>
+    <item name="CSX">4</item>
+    <item name="FB">5</item>
+    <item name="MELI">6</item>
+    <item name="NVDA">7</item>
+    <item name="QCOM">8</item>
+    <item name="TSLA">9</item>
+  </ticker_dict>
+  <data_index>
+    <element name="close">0</element>
+    <element name="high">1</element>
+    <element name="low">2</element>
+    <element name="open">3</element>
+    <element name="volume">4</element>
+    <element name="divCash">5</element>
+  </data_index>
+  <cat_index>
+    <element name="AAPL">0</element>
+    <element name="AMAT">1</element>
+    <element name="AMD">2</element>
+    <element name="AMZN">3</element>
+    <element name="CSX">4</element>
+    <element name="FB">5</element>
+    <element name="MELI">6</element>
+    <element name="NVDA">7</element>
+    <element name="QCOM">8</element>
+    <element name="TSLA">9</element>
+    <element name="Communication Services">10</element>
+    <element name="Consumer Cyclical">11</element>
+    <element name="Industrials">12</element>
+    <element name="Technology">13</element>
+    <element name="Auto Manufacturers">14</element>
+    <element name="Consumer Electronics">15</element>
+    <element name="Internet Content &amp; Information">16</element>
+    <element name="Internet Retail">17</element>
+    <element name="Railroads">18</element>
+    <element name="Semiconductor Equipment &amp; Materials">19</element>
+    <element name="Semiconductors">20</element>
+  </cat_index>
+</data>

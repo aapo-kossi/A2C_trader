@@ -12,7 +12,7 @@ import pandas as pd
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-tf.keras.backend.set_floatx('float64') 
+tf.keras.backend.set_floatx('float64')
 
 from bs4 import BeautifulSoup
 import requests

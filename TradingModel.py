@@ -135,11 +135,7 @@ class Trader(tf.keras.Model):
     def __init__(self, output_shape):
         super(Trader, self).__init__()
         
-        #hotfix:
         action_dim = output_shape[-1]
-        
-        #following variables calculated later in self.call()  
-        
         
         #initializing the model layers
         self.arrange = Arranger()
@@ -168,9 +164,9 @@ class Trader(tf.keras.Model):
         
         (x, e, y, p), orders = self.arrange(inputs[:4])
         c = inputs[4]
-        
         lb = - tf.stack(p * e)
         ub = c
+        tf.debugging.assert_non_positive(lb,'lb positive')
                 
         #simple dense network for feature encoding of categorical data
         x = self.encoder(x)
@@ -198,7 +194,7 @@ class Trader(tf.keras.Model):
         
         #actor network
         mu, L = self.actor((main, lb, ub))
-        # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
+        tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
         # tf.debugging.assert_all_finite(mu, 'action means not finite??')
         mu = self.convert_to_nshares((mu, p))
         L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype = tf.float64), tf.linalg.diag(p)), L)
@@ -235,10 +231,11 @@ class Trader(tf.keras.Model):
 
         #reordering the actions back into the input order
         action = tf.gather(action, tf.argsort(orders), batch_dims = 1)
-        action_means = tf.gather(final_mu, tf.argsort(orders), batch_dims = 1)
         
         if training:
             return action, raw_action, value, neg_cash, neg_shares, final_mu, L
+
+        action_means = tf.gather(final_mu, tf.argsort(orders), batch_dims = 1)
         return action_means, None, value, neg_cash, neg_shares, None, None
 
     def value(self, obs):

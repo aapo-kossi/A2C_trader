@@ -18,10 +18,9 @@ from bs4 import BeautifulSoup
 import requests
 from matplotlib import pyplot as plt
 from TrainData import TrainData
-from State import State
+from gym_tf_env import TradingEnv
 from records import Records, FileData
 from a2c import learn
-from vec_states import VecStates
 import TradingModel
 import constants
 #accesses datasets, starts training pipeline, monitors progress
@@ -102,10 +101,10 @@ def split_ds(ds, n_tickers):
     daily_ds = ds.batch(n_tickers, drop_remainder=True)
     
     train_ds = daily_ds.take(int(constants.TRAIN_TIME * constants.TOTAL_TIME))
-    val_ds   = daily_ds.skip(int(constants.TRAIN_TIME * constants.TOTAL_TIME)-constants.W_UP_TIME)
-    val_ds   = val_ds.take(constants.W_UP_TIME + int(constants.VAL_TIME * constants.TOTAL_TIME))
-    test_ds  = daily_ds.skip(int(constants.TOTAL_TIME * (1 - constants.TEST_TIME)) - constants.W_UP_TIME)
-    test_ds  = test_ds.take(constants.W_UP_TIME + int(constants.TEST_TIME * constants.TOTAL_TIME))
+    val_ds   = daily_ds.skip(int(constants.TRAIN_TIME * constants.TOTAL_TIME)-constants.INPUT_DAYS)
+    val_ds   = val_ds.take(constants.INPUT_DAYS + int(constants.VAL_TIME * constants.TOTAL_TIME))
+    test_ds  = daily_ds.skip(int(constants.TOTAL_TIME * (1 - constants.TEST_TIME)) - constants.INPUT_DAYS)
+    test_ds  = test_ds.take(constants.INPUT_DAYS + int(constants.TEST_TIME * constants.TOTAL_TIME))
     return train_ds, val_ds, test_ds
 
 def make_sliding_windows(ds, length):
@@ -188,8 +187,8 @@ def main():
     train_ds = train_ds.apply(lambda x: make_sliding_windows(x, constants.WINDOW_LENGTH))
     train_ds = train_ds.shuffle(constants.TOTAL_TIME // constants.WINDOW_DIFF + 1)
     
-    val_ds = val_ds.apply(lambda x: make_sliding_windows(x, constants.W_UP_TIME + int(constants.VAL_TIME * constants.TOTAL_TIME)))
-    test_ds = test_ds.apply(lambda x: make_sliding_windows(x, constants.W_UP_TIME + int(constants.TEST_TIME * constants.TOTAL_TIME)))
+    val_ds = val_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + int(constants.VAL_TIME * constants.TOTAL_TIME)))
+    test_ds = test_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + int(constants.TEST_TIME * constants.TOTAL_TIME)))
 
     reversed_ticker_dict = {float(value) : key for (key, value) in complete_data.ticker_dict.items()}
     i = 0
@@ -199,7 +198,7 @@ def main():
     vis = False
     if vis:
         for episode in train_ds:
-            state = State(episode,
+            state = TradingEnv(episode,
                           complete_data.data_index,
                           complete_data.onehot_cats,
                           constants.STARTING_CAPITAL,)
@@ -224,13 +223,13 @@ def main():
 
     # initialize envs and model
     output_shape = tf.constant((complete_data.num_tickers,), dtype = tf.int32)   
-    vec_trading_env = VecStates(train_ds, complete_data.data_index,
+    vec_trading_env = TradingEnv(train_ds, complete_data.data_index,
                                 complete_data.onehot_cats, (output_shape,),
-                                n_workers = constants.N_ENVS,
+                                n_envs = constants.N_ENVS,
                                 init_capital = 50000, MAR = constants.RF)
    
-    val_env = VecStates(val_ds, complete_data.data_index, complete_data.onehot_cats,
-                         (output_shape,), n_workers = 1, init_capital=50000, MAR = constants.RF)
+    val_env = TradingEnv(val_ds, complete_data.data_index, complete_data.onehot_cats,
+                         (output_shape,), n_envs = 1, init_capital=50000, MAR = constants.RF)
     model = TradingModel.Trader(output_shape)
 
     #learn using a2c algorithm

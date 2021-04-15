@@ -15,7 +15,7 @@ from tensorflow.keras.optimizers.schedules import CosineDecayRestarts as Cdr, In
 
 # from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
 
-from vec_states import Runner
+from runner import Runner
 
 #classes A2CModel and the learn function slightly modified from baselines A2C implementation
 #found at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
@@ -27,7 +27,7 @@ class A2CModel:
         self.ent_c = ent_c
         self.max_grad_norm = max_grad_norm
         
-    @tf.function
+    # @tf.function
     def step(self, obs, **kwargs):
         return self.model(obs, **kwargs)
     
@@ -147,7 +147,7 @@ def learn(
         if update % val_interval == 0:
             #TODO: add other metrics
             #TODO: refactor to enable loss calculation
-            obs , rewards, _ , _ , _ ,_,_= val_runner.run(until_done=True, pure_profit = True)
+            obs , rewards, _ , _ , _ ,_,_= val_runner.run(until_done=True)
             total_rewards = tf.reduce_sum(rewards)
             print(f'at update {update}, validation trajectory total rewards {total_rewards:.6f}. ')
             closes = obs[3]

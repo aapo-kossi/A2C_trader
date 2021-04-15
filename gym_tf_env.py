@@ -5,6 +5,7 @@ Created on Sat Dec 12 21:14:53 2020
 @author: Aapo Kössi
 """
 
+import numpy as np
 import tensorflow as tf
 import constants
 
@@ -26,7 +27,7 @@ class TradingEnv:
         
         self.init_capital = tf.cast(init_capital, tf.float32)
         self.data_index = tf.constant(data_index.to_numpy())
-        self.onehots = tf.repeat(tf.expand_dims(tf.constant(onehots.to_numpy()),0), n_envs, axis=0)
+        self.onehots = tf.repeat(tf.expand_dims(tf.constant(onehots.astype(np.int32).to_numpy()),0), n_envs, axis=0)
         self.total_days = train_windows.element_spec.shape[0]
         self.input_days = constants.INPUT_DAYS
         self.action_space = action_space
@@ -61,13 +62,13 @@ class TradingEnv:
             3: last prices
             4: current capital
         """
-        onehots = self.onehots
+        onehots = tf.cast(self.onehots, tf.float32)
         equity = tf.cast(self.equity, dtype = tf.float32)
         ohlcvd = tf.stack([self.ohlcvd[i,self.day[i] - self.input_days:self.day[i]] for i in range(self.num_envs)])
         ohlcvd = tf.transpose(ohlcvd, perm = [0,2,1,3])
         lasts = self.get_lasts()
         capital = self.capital
-        return [onehots, equity, ohlcvd, lasts, capital]
+        return [ tf.convert_to_tensor(ob, dtype=tf.float32) for ob in [onehots, equity, ohlcvd, lasts, capital]]
     
     def reset(self):
         trues = tf.fill(self.num_envs, True)
@@ -77,7 +78,7 @@ class TradingEnv:
     def _reset(self, dones):
         index = tf.where(dones)
         n_dones = tf.size(index)
-        tf.print(n_dones)
+        if n_dones > 0: tf.print(n_dones)
         new_ohlcvd = tf.map_fn(lambda _: self.add_noise(next(self.window)), index, fn_output_signature =tf.float32)
         self.ohlcvd.scatter_nd_update(index, new_ohlcvd)
         new_capital = tf.fill([n_dones,1], self.init_capital)
@@ -94,6 +95,9 @@ class TradingEnv:
     #faster performance step function
     @tf.function
     def step(self, action, penalties):
+        tf.print('env equity:')
+        tf.print(self.equity, summarize = 160)
+        tf.print(self.capital, summarize = 16)
         #TODO: penalties not implemented and not a priority
         orig_mkt_value = self.get_mkt_val()
         lasts = self.get_lasts()
@@ -103,7 +107,9 @@ class TradingEnv:
         self.capital.assign_add(tf.reduce_sum(- a * lasts + e * divs, axis = 1, keepdims=True), read_value=False)
         a = tf.cast(action, tf.int32)
         self.equity.assign_add(a, read_value=False)
+        tf.print(tf.reduce_min(self.equity))
         tf.debugging.assert_non_negative(self.equity, 'negative equity')
+        tf.debugging.assert_non_negative(self.capital, 'negative capital')
 
         self.day.assign_add(tf.ones_like(self.day))
         self.advance_to_wday()

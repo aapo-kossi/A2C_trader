@@ -166,8 +166,10 @@ class Trader(tf.keras.Model):
         c = inputs[4]
         lb = - tf.stack(p * e)
         ub = c
-        tf.debugging.assert_non_positive(lb,'lb positive')
-                
+        tf.print(e, summarize = 160)
+        tf.print(tf.reduce_min(ub - lb))
+        tf.debugging.assert_non_negative(e,'equity negative')
+        tf.debugging.assert_non_negative(c, 'capital negative')
         #simple dense network for feature encoding of categorical data
         x = self.encoder(x)
         # tf.debugging.assert_all_finite(x, 'autoencoder output not finite')

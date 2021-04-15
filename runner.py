@@ -22,6 +22,7 @@ class Runner:
         self.nsteps = nsteps
         self.gamma = gamma
         self.obs = env.current_time_step()
+        [tf.debugging.assert_all_finite(x, 'non finite first obs') for x in self.obs]
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
         

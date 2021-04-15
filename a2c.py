@@ -44,8 +44,7 @@ class A2CModel:
         
         with tf.GradientTape() as tape:
             mu, L, vpred = self.model(obs, dist_features = True)
-            # tf.print(tf.round(mu), summarize = tf.size(mu))
-            # tf.print(tf.round(orig_mu), summarize = tf.size(mu))
+            tf.debugging.assert_near(L, orig_L, rtol=0.0001, atol = 0.0001)
             neglogpac, n_corrupt = neglogp(raw_actions, mu, L)
             entropy = self.entropy_loss(mu, L)
             vf_loss = self.value_loss(vpred, rewards)
@@ -169,6 +168,7 @@ def neglogp(action, mu, L):
 
     vec_diff = tf.expand_dims(action - mu, -1)
     # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
+    tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
     tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
     
     y = tf.linalg.triangular_solve(L, vec_diff)
@@ -196,7 +196,6 @@ def neglogp(action, mu, L):
     # print(scale.shape)
     tf.debugging.assert_all_finite(scale, 'scale not finite')
     neglogp = const + scale + tf.squeeze(diffs_to_scale)
-    # tf.print(tf.cast(neglogp,tf.int32))
     # tf.debugging.assert_all_finite(neglogp, 'what')
     n_corrupt = tf.reduce_sum(tf.cast(neglogp > 256,tf.int32))
     neglogp = tf.clip_by_value(neglogp, - 2.0 ** 9, 2.0 ** 8)

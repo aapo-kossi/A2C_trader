@@ -167,7 +167,9 @@ class Trader(tf.keras.Model):
         lb = - tf.stack(p * e)
         ub = c
         tf.print(e, summarize = 160)
-        tf.print(tf.reduce_min(ub - lb))
+        tf.print(tf.reduce_min(p))
+        tf.print(tf.reduce_max(lb))
+        tf.print(tf.reduce_min(ub))
         tf.debugging.assert_non_negative(e,'equity negative')
         tf.debugging.assert_non_negative(c, 'capital negative')
         #simple dense network for feature encoding of categorical data

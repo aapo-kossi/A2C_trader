@@ -78,7 +78,6 @@ class TradingEnv:
     def _reset(self, dones):
         index = tf.where(dones)
         n_dones = tf.size(index)
-        if n_dones > 0: tf.print(n_dones)
         new_ohlcvd = tf.map_fn(lambda _: self.add_noise(next(self.window)), index, fn_output_signature =tf.float32)
         self.ohlcvd.scatter_nd_update(index, new_ohlcvd)
         new_capital = tf.fill([n_dones,1], self.init_capital)

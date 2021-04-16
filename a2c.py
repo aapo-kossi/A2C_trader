@@ -27,7 +27,7 @@ class A2CModel:
         self.ent_c = ent_c
         self.max_grad_norm = max_grad_norm
         
-    # @tf.function
+    @tf.function
     def step(self, obs, **kwargs):
         return self.model(obs, **kwargs)
     
@@ -91,7 +91,7 @@ def learn(
     epsilon=1e-5,
     alpha=0.99,
     gamma=0.99,
-    log_interval=1e3,
+    log_interval=1e2,
     ckpt_interval = 1e5,
     val_interval = 1e3,
     load_path=None,
@@ -168,7 +168,7 @@ def neglogp(action, mu, L):
 
     vec_diff = tf.expand_dims(action - mu, -1)
     # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
-    tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
+    # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
     tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
     
     y = tf.linalg.triangular_solve(L, vec_diff)

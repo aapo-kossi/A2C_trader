@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 import tensorflow as tf
 tf.keras.backend.set_floatx('float64')
 
@@ -226,10 +226,10 @@ def main():
     vec_trading_env = TradingEnv(train_ds, complete_data.data_index,
                                 complete_data.onehot_cats, (output_shape,),
                                 n_envs = constants.N_ENVS,
-                                init_capital = 50000, MAR = constants.RF)
+                                init_capital = 50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO)
    
     val_env = TradingEnv(val_ds, complete_data.data_index, complete_data.onehot_cats,
-                         (output_shape,), n_envs = 1, init_capital=50000, MAR = constants.RF)
+                         (output_shape,), n_envs = 1, init_capital=50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO)
     model = TradingModel.Trader(output_shape)
 
     #learn using a2c algorithm

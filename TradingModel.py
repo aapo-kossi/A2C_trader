@@ -166,10 +166,10 @@ class Trader(tf.keras.Model):
         c = inputs[4]
         lb = - tf.stack(p * e)
         ub = c
-        tf.print(e, summarize = 160)
-        tf.print(tf.reduce_min(p))
-        tf.print(tf.reduce_max(lb))
-        tf.print(tf.reduce_min(ub))
+        # tf.print(e, summarize = 160)
+        # tf.print(tf.reduce_min(p))
+        # tf.print(tf.reduce_max(lb))
+        # tf.print(tf.reduce_min(ub))
         tf.debugging.assert_non_negative(e,'equity negative')
         tf.debugging.assert_non_negative(c, 'capital negative')
         #simple dense network for feature encoding of categorical data
@@ -198,7 +198,7 @@ class Trader(tf.keras.Model):
         
         #actor network
         mu, L = self.actor((main, lb, ub))
-        tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
+        # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
         # tf.debugging.assert_all_finite(mu, 'action means not finite??')
         mu = self.convert_to_nshares((mu, p))
         L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype = tf.float64), tf.linalg.diag(p)), L)

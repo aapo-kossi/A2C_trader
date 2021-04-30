@@ -92,9 +92,9 @@ def learn(
     epsilon=1e-5,
     alpha=0.99,
     gamma=0.99,
-    log_interval=1e3,
+    log_interval=50,
     ckpt_interval = 1e5,
-    val_interval = 1e3,
+    val_interval = 50,
     load_path=None,
     MAR=None,
     **network_kwargs):

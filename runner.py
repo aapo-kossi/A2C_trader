@@ -33,6 +33,7 @@ class Runner:
         def single_step():
             obs = self.obs
             actions, raw_actions, values, neg_cash_pen, neg_shares_pen, mu, L = self.model.step(obs, training = self.training)
+
             # Append the experiences
             mb_obs.append(obs.copy())
             mb_actions.append(actions)
@@ -57,7 +58,7 @@ class Runner:
             done = False
             while not done:
                 single_step()
-                done = mb_dones[-1][0]
+                done = tf.reduce_any(mb_dones[-1])
         else:
             for n in range(self.nsteps):
                 single_step()

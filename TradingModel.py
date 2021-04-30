@@ -240,7 +240,7 @@ class Trader(tf.keras.Model):
             return action, raw_action, value, neg_cash, neg_shares, final_mu, L
 
         action_means = tf.gather(final_mu, tf.argsort(orders), batch_dims = 1)
-        return action_means, None, value, neg_cash, neg_shares, None, None
+        return action_means
 
     def value(self, obs):
         vpreds = self.call(obs, val_only = True)

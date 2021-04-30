@@ -187,8 +187,10 @@ def main():
     train_ds = train_ds.apply(lambda x: make_sliding_windows(x, constants.WINDOW_LENGTH))
     train_ds = train_ds.shuffle(constants.TOTAL_TIME // constants.WINDOW_DIFF + 1)
     
-    val_ds = val_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + int(constants.VAL_TIME * constants.TOTAL_TIME)))
-    test_ds = test_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + int(constants.TEST_TIME * constants.TOTAL_TIME)))
+    eval_steps = int(constants.VAL_TIME * constants.TOTAL_TIME)
+    test_steps = eval_steps
+    val_ds = val_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + eval_steps))
+    test_ds = test_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + test_steps))
 
     reversed_ticker_dict = {float(value) : key for (key, value) in complete_data.ticker_dict.items()}
     i = 0
@@ -237,6 +239,8 @@ def main():
           vec_trading_env,
           val_env = val_env,
           steps_per_update=constants.N_STEPS_UPDATE,
+          eval_steps=int(eval_steps * 255/365),
+          test_steps=int(test_steps * 255/365),
           init_lr = constants.INIT_LR,
           decay_steps = constants.INIT_DECAY_STEPS,
           decay_rate= constants.DECAY_RATE,

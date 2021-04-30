@@ -48,6 +48,7 @@ class TradingEnv:
         self.returns = tf.Variable(tf.zeros(n_envs))
         self.n_step = tf.Variable(tf.zeros(n_envs, dtype = tf.int32))
         self.day = tf.Variable(self.n_step + self.input_days)
+        self.one = tf.ones_like(self.n_step)
         
         init_ohlcvd = tf.zeros((n_envs,) + self.window.element_spec.shape)
         self.ohlcvd = tf.Variable(initial_value=init_ohlcvd)
@@ -79,22 +80,21 @@ class TradingEnv:
         return
     
     def _reset(self, dones):
-        if tf.reduce_any(dones):
-            index = tf.where(dones)
-            n_dones = tf.size(index)
-            new_ohlcvd = tf.map_fn(lambda i: next(self.window), index, parallel_iterations=16, fn_output_signature=tf.float32)            
-            if self.noisy:
-                new_ohlcvd = self.add_noise(new_ohlcvd)
-            self.ohlcvd.scatter_nd_update(index, new_ohlcvd)
-            new_capital = tf.fill([n_dones,1], self.init_capital)
-            self.capital.scatter_nd_update(index, new_capital)
-            new_equity = tf.zeros([n_dones, self.n_symbols], dtype = tf.int32)
-            self.equity.scatter_nd_update(index, new_equity)
-            new_step = tf.zeros([n_dones], dtype = tf.int32)
-            self.n_step.scatter_nd_update(index, new_step)
-            new_day = new_step + self.input_days
-            self.day.scatter_nd_update(index, new_day)
-            self.advance_to_wday()
+        index = tf.where(dones)
+        n_dones = tf.size(index)
+        new_ohlcvd = tf.map_fn(lambda i: next(self.window), index, parallel_iterations=16, fn_output_signature=tf.float32)            
+        if self.noisy:
+            new_ohlcvd = self.add_noise(new_ohlcvd)
+        self.ohlcvd.scatter_nd_update(index, new_ohlcvd)
+        new_capital = tf.fill([n_dones,1], self.init_capital)
+        self.capital.scatter_nd_update(index, new_capital)
+        new_equity = tf.zeros([n_dones, self.n_symbols], dtype = tf.int32)
+        self.equity.scatter_nd_update(index, new_equity)
+        new_step = tf.zeros([n_dones], dtype = tf.int32)
+        self.n_step.scatter_nd_update(index, new_step)
+        new_day = new_step + self.input_days
+        self.day.scatter_nd_update(index, new_day)
+        self.advance_to_wday()
         return
         
     #faster performance step function
@@ -107,22 +107,21 @@ class TradingEnv:
         orig_mkt_value = self.get_mkt_val()
         lasts = self.get_lasts()
         divs = self.get_div()
-        a = tf.cast(tf.cast(action, tf.int32),tf.float32)
-        e = tf.cast(self.equity, tf.float32)
-        self.capital.assign_add(tf.reduce_sum(- a * lasts + e * divs, axis = 1, keepdims=True), read_value=False)
         a = tf.cast(action, tf.int32)
+        e = tf.cast(self.equity, tf.float32)
+        self.capital.assign_add(tf.reduce_sum(- tf.cast(a, tf.float32) * lasts + e * divs, axis = 1, keepdims=True), read_value=False)
         self.equity.assign_add(a, read_value=False)
         # tf.print(tf.reduce_min(self.equity))
         tf.debugging.assert_non_negative(self.equity, 'negative equity')
         tf.debugging.assert_non_negative(self.capital, 'negative capital')
 
-        self.day.assign_add(tf.ones_like(self.day))
+        self.day.assign_add(self.one)
         self.advance_to_wday()
             
-        self.n_step.assign_add(tf.ones_like(self.n_step))
+        self.n_step.assign_add(self.one)
         dones = self.day >= self.total_days
         rewards = self.get_rewards(orig_mkt_value)
-        self._reset(dones)
+        if tf.reduce_any(dones): self._reset(dones)
         return self.current_time_step(), rewards, dones
         
     def render(self):
@@ -135,6 +134,7 @@ class TradingEnv:
     
 
     def close(self):
+        print(f'closed environment {self.__name__}')
         del self
         return
     
@@ -169,7 +169,8 @@ class TradingEnv:
         return closed
         
     def get_current_val(self, feature):
-        today =  tf.stack([self.ohlcvd[i,self.day[i] - 1] for i in range(self.num_envs)])
+        # today =  tf.stack([self.ohlcvd[i,self.day[i] - 1] for i in range(self.num_envs)])
+        today = tf.gather(self.ohlcvd, self.day - 1, batch_dims=1)
         index = tf.squeeze(tf.where(self.data_index == feature))
         todays_val = today[...,index]
         return todays_val
@@ -195,7 +196,7 @@ class TradingEnv:
         
         mu = ohlcvd
         std = mu * ratio
-        noisy = N(mu, std).sample()
+        noisy = N(mu, scale_diag = std).sample()
         noisy = tf.where(noisy == 0.0, 0.0, tf.clip_by_value(noisy, 5e-3, tf.float32.max))
 
         # print(noisy.shape)

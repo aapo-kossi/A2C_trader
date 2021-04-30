@@ -78,6 +78,8 @@ def learn(
     env,
     val_env = None,
     steps_per_update=5,
+    eval_steps = 100,
+    test_steps = 100,
     total_timesteps=int(80e6),
     vf_coef=0.5,
     ent_coef=0.01,
@@ -91,9 +93,9 @@ def learn(
     epsilon=1e-5,
     alpha=0.99,
     gamma=0.99,
-    log_interval=1e2,
+    log_interval=50,
     ckpt_interval = 1e5,
-    val_interval = 1e3,
+    val_interval = 50,
     load_path=None,
     MAR=None,
     **network_kwargs):
@@ -119,7 +121,7 @@ def learn(
     
     runner = Runner(env, model, steps_per_update, gamma)
     
-    val_runner = Runner(val_env, model, None, gamma, training = False)
+    val_runner = Runner(val_env, model, eval_steps, 0.0)
     t_start = time.time()
     
     n_updates = total_timesteps // (nenvs * steps_per_update)
@@ -146,11 +148,11 @@ def learn(
         if update % val_interval == 0:
             #TODO: add other metrics
             #TODO: refactor to enable loss calculation
-            obs , rewards, _ , _ , _ ,_,_= val_runner.run(until_done=True)
+            obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
             total_rewards = tf.reduce_sum(rewards)
             print(f'at update {update}, validation trajectory total rewards {total_rewards:.6f}. ')
             closes = obs[3]
-            y_rew = tf.cumsum(rewards).numpy() / obs[4][0,0] + 1.0 
+            y_rew = tf.math.cumprod(rewards / 100 + 1.0)
             x = range(rewards.shape[0])
             ax.clear()
             ax.plot(x, y_rew, 'r--')

@@ -15,7 +15,7 @@ from tensorflow.keras.optimizers.schedules import CosineDecayRestarts as Cdr, In
 
 # from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
 
-from vec_states import Runner
+from runner import Runner
 
 #classes A2CModel and the learn function slightly modified from baselines A2C implementation
 #found at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
@@ -44,8 +44,7 @@ class A2CModel:
         
         with tf.GradientTape() as tape:
             mu, L, vpred = self.model(obs, dist_features = True)
-            # tf.print(tf.round(mu), summarize = tf.size(mu))
-            # tf.print(tf.round(orig_mu), summarize = tf.size(mu))
+            tf.debugging.assert_near(L, orig_L, rtol=0.0001, atol = 0.0001)
             neglogpac, n_corrupt = neglogp(raw_actions, mu, L)
             entropy = self.entropy_loss(mu, L)
             vf_loss = self.value_loss(vpred, rewards)
@@ -79,6 +78,8 @@ def learn(
     env,
     val_env = None,
     steps_per_update=5,
+    eval_steps = 100,
+    test_steps = 100,
     total_timesteps=int(80e6),
     vf_coef=0.5,
     ent_coef=0.01,
@@ -120,7 +121,7 @@ def learn(
     
     runner = Runner(env, model, steps_per_update, gamma)
     
-    val_runner = Runner(val_env, model, None, gamma, training = False)
+    val_runner = Runner(val_env, model, eval_steps, 0.0)
     t_start = time.time()
     
     n_updates = total_timesteps // (nenvs * steps_per_update)
@@ -147,11 +148,11 @@ def learn(
         if update % val_interval == 0:
             #TODO: add other metrics
             #TODO: refactor to enable loss calculation
-            obs , rewards, _ , _ , _ ,_,_= val_runner.run(until_done=True, pure_profit = True)
+            obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
             total_rewards = tf.reduce_sum(rewards)
             print(f'at update {update}, validation trajectory total rewards {total_rewards:.6f}. ')
             closes = obs[3]
-            y_rew = tf.cumsum(rewards).numpy() / obs[4][0,0] + 1.0 
+            y_rew = tf.math.cumprod(rewards / 100 + 1.0)
             x = range(rewards.shape[0])
             ax.clear()
             ax.plot(x, y_rew, 'r--')
@@ -169,6 +170,7 @@ def neglogp(action, mu, L):
 
     vec_diff = tf.expand_dims(action - mu, -1)
     # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
+    # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
     tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
     
     y = tf.linalg.triangular_solve(L, vec_diff)
@@ -196,7 +198,6 @@ def neglogp(action, mu, L):
     # print(scale.shape)
     tf.debugging.assert_all_finite(scale, 'scale not finite')
     neglogp = const + scale + tf.squeeze(diffs_to_scale)
-    # tf.print(tf.cast(neglogp,tf.int32))
     # tf.debugging.assert_all_finite(neglogp, 'what')
     n_corrupt = tf.reduce_sum(tf.cast(neglogp > 256,tf.int32))
     neglogp = tf.clip_by_value(neglogp, - 2.0 ** 9, 2.0 ** 8)

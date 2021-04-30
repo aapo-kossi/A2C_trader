@@ -135,11 +135,7 @@ class Trader(tf.keras.Model):
     def __init__(self, output_shape):
         super(Trader, self).__init__()
         
-        #hotfix:
         action_dim = output_shape[-1]
-        
-        #following variables calculated later in self.call()  
-        
         
         #initializing the model layers
         self.arrange = Arranger()
@@ -168,10 +164,14 @@ class Trader(tf.keras.Model):
         
         (x, e, y, p), orders = self.arrange(inputs[:4])
         c = inputs[4]
-        
         lb = - tf.stack(p * e)
         ub = c
-                
+        # tf.print(e, summarize = 160)
+        # tf.print(tf.reduce_min(p))
+        # tf.print(tf.reduce_max(lb))
+        # tf.print(tf.reduce_min(ub))
+        tf.debugging.assert_non_negative(e,'equity negative')
+        tf.debugging.assert_non_negative(c, 'capital negative')
         #simple dense network for feature encoding of categorical data
         x = self.encoder(x)
         # tf.debugging.assert_all_finite(x, 'autoencoder output not finite')
@@ -235,11 +235,12 @@ class Trader(tf.keras.Model):
 
         #reordering the actions back into the input order
         action = tf.gather(action, tf.argsort(orders), batch_dims = 1)
-        action_means = tf.gather(final_mu, tf.argsort(orders), batch_dims = 1)
         
         if training:
             return action, raw_action, value, neg_cash, neg_shares, final_mu, L
-        return action_means, None, value, neg_cash, neg_shares, None, None
+
+        action_means = tf.gather(final_mu, tf.argsort(orders), batch_dims = 1)
+        return action_means
 
     def value(self, obs):
         vpreds = self.call(obs, val_only = True)

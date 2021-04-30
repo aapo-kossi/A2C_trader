@@ -12,7 +12,7 @@ def add(name, val):
     others[name] = val
     
     
-
+DEFAULT_TICKERS = 20
 NUM_MODELS = 1
 TOTAL_TIME = 20*365
 TRAIN_TIME = 0.8

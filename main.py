@@ -23,6 +23,7 @@ from records import Records, FileData
 from a2c import learn
 import TradingModel
 import constants
+import arg_parser
 #accesses datasets, starts training pipeline, monitors progress
 
 
@@ -122,32 +123,16 @@ def main():
     
     print('started')
     plt.ion()
-    load = input("Do you want to load a dataset from drive?\n")
-
-    if load.strip().lower() == "yes":
-        name = input("Enter the name of the file to be loaded without suffix, "\
-                     "or type \"cancel\" to exit:\n")
-        if name == 'cancel':
-            print('exitting...')
-            raise SystemExit      
-        else:
-            while not name or contains_special(name):
-                name = input("Please input a filename, don't use special characters")
-            complete_data = Records.read_record(name)
-            
-            
+    
+    args = arg_parser.parser.parse_args()
+    if args.usefile is not None:
+        complete_data = Records.read_record(args.usefile)
     else:
-        print("Will load data using the Tiingo API")
-        num_tickers = int(input("Input the number of stocks to use:\n"))
-        record = input("Do you want to save the generated dataset to file?\n")
-        to_file = False
-        if record.strip().lower() == "yes":
-            to_file = True
-            name = input("Please input a name for the file without suffix,\n"\
-                         "don't include special characters:\n")
-            while not name or contains_special(name):
-                name = input("Invalid input, don't use special characters in the name.\nInput valid name:\n")
-                name = name.strip()
+        num_tickers = constants.DEFAULT_TICKERS
+        if args.num_tickers is not None:
+            num_tickers = args.num_tickers
+        num_tickers = constants.DEFAULT_TICKERS
+        new_filename = args.save_data
         tickers, sectors, industries = get_tickers(count=num_tickers)
         
         #TODO: this is just an awful way to load data, it all gets collected to memory at once
@@ -170,11 +155,10 @@ def main():
                                  ticker_dict,
                                  onehot_categories,
                                  num_tickers)
-        if to_file:
+        if new_filename is not None:
             Records.write_record(complete_data,
-                                 file_name = name)
-            ans = input("Do you want to immediately start training using the saved data?\n[y]/[n]\n")
-            if ans == 'n':
+                                 file_name = new_filename)
+            if args.stop:
                 raise SystemExit
         
     #TODO: can't imagine next line follows any sort of best practices

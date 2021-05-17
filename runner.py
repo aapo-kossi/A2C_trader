@@ -88,8 +88,8 @@ class Runner:
             rewards_done = get_discounted_rewards(mb_rewards, mb_dones, self.gamma)
             mb_rewards = tf.where(done_in_end, rewards_done, rewards_not_done)
             
-            
         mb_rewards = tf.transpose(tf.stack(mb_rewards), (1,0))
+        mb_rewards = tf.cast(mb_rewards, tf.float64)
         mb_rewards = tf.reshape(mb_rewards, [-1])
         mb_values = tf.reshape(mb_values, [-1])
         return mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L

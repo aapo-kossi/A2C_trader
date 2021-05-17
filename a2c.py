@@ -71,7 +71,52 @@ class A2CModel:
         entropies = entropy(mu, L)
         return tf.reduce_mean(entropies) * self.ent_c
     
+def neglogp(action, mu, L):
+    n = tf.cast(action.shape[-1], tf.float64)
+
+    vec_diff = tf.expand_dims(action - mu, -1)
+    # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
+    # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
+    tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
     
+    y = tf.linalg.triangular_solve(L, vec_diff)
+    vec_diff_ = tf.linalg.matvec(L, tf.squeeze(y, axis = -1))
+    good_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-5)
+
+    ok_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-2)
+    if not ok_L:
+        tf.print('severe numerical issues')
+    elif not good_L:
+        tf.print('numerical issues')
+    any_good_L = tf.reduce_any(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-8)
+    if not any_good_L:
+        tf.print('network has gone to shit, no valid covariance matrices so cannot update weights')
+    
+    x = tf.linalg.triangular_solve(tf.linalg.matrix_transpose(L), y, lower = False)
+    
+    diffs_to_scale = 0.5 * tf.linalg.matrix_transpose(vec_diff) @ x
+    # print(diffs_to_scale.shape)
+    # tf.debugging.assert_all_finite(diffs_to_scale, 'diffs not finite')
+    const = 0.5 * n * tf.math.log(tf.constant(2.0, dtype = tf.float64) * np.pi)
+    # print(const.shape)
+    # tf.debugging.assert_all_finite(const, 'const not finite')
+    scale = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1)
+    # print(scale.shape)
+    tf.debugging.assert_all_finite(scale, 'scale not finite')
+    neglogp = const + scale + tf.squeeze(diffs_to_scale)
+    # tf.debugging.assert_all_finite(neglogp, 'what')
+    n_corrupt = tf.reduce_sum(tf.cast(neglogp > 256,tf.int32))
+    neglogp = tf.clip_by_value(neglogp, - 2.0 ** 9, 2.0 ** 8)
+    return neglogp, n_corrupt
+
+def entropy(mu, L):
+    n = tf.cast(mu.shape[-1], tf.float64)
+    ent = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1) + \
+          0.5 * n * (1.0 + tf.math.log(tf.constant(2, dtype = tf.float64) * np.pi))
+    # print(ent)
+    tf.debugging.assert_all_finite(ent, 'the hell??')
+    return ent
+  
    
 def learn(
     network,
@@ -137,7 +182,7 @@ def learn(
 
         if update % log_interval == 0:
             print("current single env steps fps: {}".format(fps))
-            print("policy loss {:.3f},\n critic loss {:.3f},\n entropy loss {:.3f}".format(policy_loss, value_loss, entropy))
+            print("     policy loss {:.3f},\n     critic loss {:.3f},\n entropy loss {:.3f}".format(policy_loss, value_loss, entropy))
             print(f'mean reward for minibatch {update}: {tf.reduce_mean(rewards):.3g}')
             #TODO: add logging method for tensorboard
         if update % ckpt_interval == 0:
@@ -146,11 +191,14 @@ def learn(
             raise SystemExit
             network.save_weights()
         if update % val_interval == 0:
-            #TODO: add other metrics
-            #TODO: refactor to enable loss calculation
             obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
             total_rewards = tf.reduce_sum(rewards)
+            neglogpac, _ = neglogp(raw_actions, mus, Ls)
+            advs = rewards - values
+            pg_loss = model.action_loss(neglogpac, advs)
+            value_loss = model.value_loss(values, rewards)
             print(f'at update {update}, validation trajectory total rewards {total_rewards:.6f}. ')
+            print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}')
             closes = obs[3]
             y_rew = tf.math.cumprod(rewards / 100 + 1.0)
             x = range(rewards.shape[0])
@@ -165,51 +213,6 @@ def learn(
     return model
 
 
-def neglogp(action, mu, L):
-    n = tf.cast(action.shape[-1], tf.float64)
-
-    vec_diff = tf.expand_dims(action - mu, -1)
-    # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
-    # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
-    tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
-    
-    y = tf.linalg.triangular_solve(L, vec_diff)
-    vec_diff_ = tf.linalg.matvec(L, tf.squeeze(y, axis = -1))
-    good_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-5)
-
-    ok_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-2)
-    if not ok_L:
-        tf.print('severe numerical issues')
-    elif not good_L:
-        tf.print('numerical issues')
-    any_good_L = tf.reduce_any(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-8)
-    if not any_good_L:
-        tf.print('network has gone to shit, no valid covariance matrices so cannot update weights')
-    
-    x = tf.linalg.triangular_solve(tf.linalg.matrix_transpose(L), y, lower = False)
-    
-    diffs_to_scale = 0.5 * tf.linalg.matrix_transpose(vec_diff) @ x
-    # print(diffs_to_scale.shape)
-    # tf.debugging.assert_all_finite(diffs_to_scale, 'diffs not finite')
-    const = 0.5 * n * tf.math.log(tf.constant(2.0, dtype = tf.float64) * np.pi)
-    # print(const.shape)
-    # tf.debugging.assert_all_finite(const, 'const not finite')
-    scale = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1)
-    # print(scale.shape)
-    tf.debugging.assert_all_finite(scale, 'scale not finite')
-    neglogp = const + scale + tf.squeeze(diffs_to_scale)
-    # tf.debugging.assert_all_finite(neglogp, 'what')
-    n_corrupt = tf.reduce_sum(tf.cast(neglogp > 256,tf.int32))
-    neglogp = tf.clip_by_value(neglogp, - 2.0 ** 9, 2.0 ** 8)
-    return neglogp, n_corrupt
-
-def entropy(mu, L):
-    n = tf.cast(mu.shape[-1], tf.float64)
-    ent = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1) + \
-          0.5 * n * (1.0 + tf.math.log(tf.constant(2, dtype = tf.float64) * np.pi))
-    # print(ent)
-    tf.debugging.assert_all_finite(ent, 'the hell??')
-    return ent
 
 
 

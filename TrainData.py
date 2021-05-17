@@ -50,9 +50,11 @@ class TrainData:
     def get_data(self):
         return self.__data
 
+    @classmethod
     def generate(tickers, t_train):
         return list(map(lambda sym: TrainData(sym, t_train), tickers))
 
+    @classmethod
     def combine(multiple):
         dataset = []
         for data in map(lambda x: x.get_data(), multiple):

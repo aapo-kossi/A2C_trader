@@ -29,71 +29,7 @@ import arg_parser
 
 
 
-def get_tickers(count = 250):
-    if not(0 < count <=250):
-        count = 250
-    q = {'count': str(count)}
-    print('scraping yahoo finance')
-    #default screener filters: 3Y beta above 1.8, listed on nasdaq, avg vol above 250k
-    yahoo_screen = ('https://finance.yahoo.com/screener/unsaved/'
-                    'ffd37f34-8731-46d2-98d9-0372b15fea17?offset=0&')
-    req = requests.get(yahoo_screen, params=q)
-    soup = BeautifulSoup(req.text, 'lxml')
-    tickers = []
-    try:
-        links = soup.table.find_all('a')
-    except:
-        print(('Something went wrong when screening for stocks,\n'
-              'check the validity of the link.'))
-        raise SystemExit
-    for i in range(len(links)):
-        tickers.append(links[i].text)
-    
-    sectors = []
-    industries = []
-    for sym in tickers:
-        print('trying to scrape sector and industry')
-        req = requests.get('https://finance.yahoo.com/'\
-                           'quote/{}/profile?p={}'.format(sym, sym))
-        soup = BeautifulSoup(req.text, 'lxml')
-        print('got data for:\n{}: '.format(sym), end = '')
-        spans = soup.find_all('span', {'class':'Fw(600)'})
-        try:
-            sectors.append(spans[0].text)
-            industries.append(spans[1].text)
-        except:
-            sectors.append('unknown')
-            industries.append('unknown')
-        print(sectors[-1], end = ', ')
-        print(industries[-1], end = '.\n')
-    return tickers, sectors, industries
 
-
-    
-    
-        
-# def train():
-#     a=1
-#     pre-processing: randomized starting date per loop
-#     all tickers included in all loops
-#     3 year historical data per loop
-#     randomized ticker order
-#     dates excluded to reduce overfitting
-#     added noise to reduce overfitting
-
-#     model inputs: daily stock-data from 3 past years
-#     current positions / capital
-
-#     model targets: has some capital
-#     advances day at a time, open->close, buy/sell x-amount at either
-    
-#     simulate performance for 3 month period per loop
-#     update weights after x-amount of loops
-
-def onehot_encode(lst):
-    as_df = pd.DataFrame({'categories' : lst})
-    one_hot = pd.get_dummies(as_df['categories'], dtype=np.bool_)
-    return one_hot
 
 def split_ds(ds, n_tickers):
     if constants.TRAIN_TIME + constants.VAL_TIME + constants.TEST_TIME != 1.0:
@@ -125,41 +61,11 @@ def main():
     plt.ion()
     
     args = arg_parser.parser.parse_args()
-    if args.usefile is not None:
-        complete_data = Records.read_record(args.usefile)
+    if args.datafile is not None:
+        complete_data = Records.read_record(args.datafile)
     else:
-        num_tickers = constants.DEFAULT_TICKERS
-        if args.num_tickers is not None:
-            num_tickers = args.num_tickers
-        num_tickers = constants.DEFAULT_TICKERS
-        new_filename = args.save_data
-        tickers, sectors, industries = get_tickers(count=num_tickers)
-        
-        #TODO: this is just an awful way to load data, it all gets collected to memory at once
-        df, ticker_dict = TrainData.combine(TrainData.generate(tickers, constants.TOTAL_TIME))
-        
-        print('got data for stocks, preprocessing data')
-        #TODO: combine into a method call, looks very dirty
-        ticker_list = list(ticker_dict.keys())
-        onehot_tickers = onehot_encode(ticker_list)
-        onehot_sectors = onehot_encode(sectors)
-        onehot_industries = onehot_encode(industries)
-        onehot_categories = onehot_tickers.join(onehot_sectors, rsuffix='_sect')
-        onehot_categories = onehot_categories.join(onehot_industries, rsuffix='_ind')
-        
-        data_index = df.columns            
-        
-        dataset = tf.data.Dataset.from_tensor_slices((df.values))
-        complete_data = FileData(dataset,
-                                 data_index,
-                                 ticker_dict,
-                                 onehot_categories,
-                                 num_tickers)
-        if new_filename is not None:
-            Records.write_record(complete_data,
-                                 file_name = new_filename)
-            if args.stop:
-                raise SystemExit
+        print('no datafile provided, exitting...')
+        raise SystemExit
         
     #TODO: can't imagine next line follows any sort of best practices
     constants.add('data_index', complete_data.data_index)

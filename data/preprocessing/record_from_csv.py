@@ -5,15 +5,24 @@ Created on Mon May 17 08:32:35 2021
 @author: Aapo Kössi
 """
 
-import os
+import sys
 import pandas as pd
+import numpy as np
 import tensorflow as tf
 import argparse
 import datetime
+sys.path.append('C:/users/aapok/AerialRealTimeVehicleRecognition/TensorFlow/workspace/trader/A2C_trader')
+from records import Records, FileData
+import constants
+
+def onehot_encode(lst):
+    as_df = pd.DataFrame({'categories' : lst})
+    one_hot = pd.get_dummies(as_df['categories'], dtype=np.bool_)
+    return one_hot
+
 
 start = datetime.date(1990,1,1)
 end = datetime.date(2021, 3, 31)
-dti = pd.date_range(start=start,end=end)
 
 parser = argparse.ArgumentParser(description='generate tfrecord file for model training, '\
                                              'provided a .csv file of stock data.')
@@ -24,16 +33,58 @@ arg = parser.parse_args()
 filepath = arg.filepath
 
 df = pd.read_csv(filepath, index_col = [0,2])
-df = df.index.set_levels(pd.to_datetime(df.index.get_level_values(1)),level=1)
+
+
+print('got the dataframe')
 df = df[df['curcdd']=='USD']
 
-df[['prccd','prchd','prcld','prcod','divd','divsp']] *= df['ajexdi'] ** -1
+print(df.head())
+df[['prccd','prchd','prcld','prcod','divd','divsp']] = \
+    df[['prccd','prchd','prcld','prcod','divd','divsp']].multiply(
+    df['ajexdi'] ** -1,axis = 'index')
+df = df.fillna(0)
 df['dist'] = df['cheqv'] + df['divd'] + df['divsp']
-df = df.drop(['ajexdi','curcdd','iid','cheqv','divd','divsp'],axis='columns')
+df.drop(['ajexdi','curcdd','iid','cheqv','divd','divsp'],axis='columns', inplace=True)
+print('did initial preprocessing')
 ticker_dfs = list(df.groupby('GVKEY', sort=False))
-processed_dfs = []
+nested_datalists= []
+sector_list = []
+industry_list = []
+lens = []
+key_list = []
+conames = []
+print('starting loop')
 for gvkey, df in ticker_dfs:
-    df = df.sort_index()
-    df = df.reindex(dti, fill_value = 0)
-    processed_dfs.append(df)
-sparse_df = pd.concat(processed_dfs)
+    if df.shape[0] < constants.MIN_DAYS_AVLB: continue
+    # print('enough datapoints to include')
+    df.sort_index(inplace=True)
+    sector_list.append(str(int(df.gsector.iloc[0])))
+    industry_list.append(str(int(df.gind.iloc[0])))
+    conames.append(df['conm'].iloc[0])
+    df.drop(['conm'],axis=1,inplace = True)
+    unique = ~df.index.duplicated(keep='first')
+    df = df[unique]
+    df = df.reset_index(level=1)
+    df.rename({'datadate':'date'},axis=1,inplace=True)
+    df['date'] = df['date'].astype('float')
+    # print('dropped duplicate days')
+    ndarray = df.to_numpy()
+    nested_datalists.append(ndarray.tolist())
+    lens.append(df.shape[0])
+    key_list.append(gvkey)
+print('finished loop')
+# df = pd.concat(processed_dfs).reset_index(level = 1)
+print('got complete nested data')
+rgd = tf.ragged.constant(nested_datalists, ragged_rank=1, inner_shape=(9,))
+dataset = tf.data.Dataset.from_tensor_slices((rgd,))
+data_index = df.columns
+ticker_dict = dict(zip(conames,key_list))
+onehot_sectors = onehot_encode(sector_list)
+onehot_industries = onehot_encode(industry_list)
+onehot_cats = onehot_sectors.join(onehot_industries,rsuffix='_ind')
+num_tickers = len(conames)
+complete_data = FileData(dataset, data_index, ticker_dict, onehot_cats, num_tickers, lens)
+print(complete_data.dataset.element_spec)
+Records.write_record(complete_data, file_name='CCM1v2')
+
+

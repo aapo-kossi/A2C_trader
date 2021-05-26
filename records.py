@@ -7,11 +7,12 @@ Created on Sat Oct 31 19:47:52 2020
 
 import numpy as np
 import tensorflow as tf
-from object_detection.utils import dataset_util
 import os
 from lxml import etree as ET
 import pandas as pd
 from dataclasses import dataclass
+import pathlib
+from typing import List
 
 
 @dataclass
@@ -21,6 +22,7 @@ class FileData:
     ticker_dict: dict
     onehot_cats: pd.DataFrame
     num_tickers: int
+    lens: List[int]
      
 
 class Records:
@@ -29,8 +31,9 @@ class Records:
     WIP
     
     """
-    path = os.getcwd()
+    path = pathlib.Path(__file__).parent.absolute()
     def write_record(file_data, file_name):
+        len_iterator = iter(file_data.lens)
         """
         
         writes dataset and the relevant information into tfrecord and accompanying xml files
@@ -39,17 +42,18 @@ class Records:
         number of tickers, the ticker names and dataset column names will be saved in .xml file
         
         """
-        def serialize(data):
+        def serialize(data,length):
             feature = {
-                file_data.data_index[i] : dataset_util.float_list_feature([data[i].numpy()]) \
+                file_data.data_index[i] : _float_feature([data[:,i].numpy().tolist()]) \
                 for i in range(len(file_data.data_index))
                 }
+            feature['len'] = _int64_feature(length)
             proto = tf.train.Example(features = tf.train.Features(feature = feature))
             return proto.SerializeToString()
         def tf_serialize(data):
             tf_string = tf.py_function(
                 serialize,
-                [data],
+                ((data, next(len_iterator))),
                 tf.string)
             return tf.reshape(tf_string, ())
         def dict_to_xml(root, name, d):
@@ -106,7 +110,7 @@ class Records:
         
         dict_to_xml(root, 'ticker_dict', file_data.ticker_dict)
         
-        indexes = {'data_index': file_data.data_index, 'cat_index': cat_index}
+        indexes = {'data_index': file_data.data_index, 'cat_index': cat_index, 'len_index': file_data.lens}
         
         for key in indexes:
             arr_to_xml(root, key, indexes[key])
@@ -160,8 +164,8 @@ class Records:
         num_tickers = int(root.find('num_tickers').text)
         dict_names = ['ticker_dict']
         ticker_dict = retrieve_dicts(dict_names)[0]
-        index_names = ['data_index', 'cat_index']
-        data_index, cat_index = retrieve_indexes(index_names)
+        index_names = ['data_index', 'cat_index', 'lens']
+        data_index, cat_index, lens = retrieve_indexes(index_names)
         
         npy_name = '{}/data/{}.npy'.format(Records.path, filename)
         onehot_cat_arr = np.load(npy_name)
@@ -190,10 +194,16 @@ class Records:
             data_index,
             ticker_dict,
             encoded_cats,
-            num_tickers)
+            num_tickers,
+            lens)
         
         return complete_data
     
+def _float_feature(val):
+    return tf.train.Feature(float_list=tf.train.FloatList(value =val))
+
+def _int64_feature(val):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=val))
     
 
     

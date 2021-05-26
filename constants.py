@@ -11,15 +11,16 @@ i = 0
 def add(name, val):
     others[name] = val
     
-    
-DEFAULT_TICKERS = 20
+
+MIN_DAYS_AVLB = 255
+DEFAULT_TICKERS = 10
 NUM_MODELS = 1
-TOTAL_TIME = 20*365
+TOTAL_TIME = 11413 #this was obtained by manual analysis of end and start dates
 TRAIN_TIME = 0.8
 VAL_TIME = 0.1
 TEST_TIME = 0.1
-INPUT_DAYS = 640
-WINDOW_LENGTH = 730
+INPUT_DAYS = 180
+WINDOW_LENGTH = 365
 WINDOW_DIFF = 7
 GAMMA = 0.9
 STARTING_CAPITAL = 50000

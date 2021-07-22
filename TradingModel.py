@@ -111,7 +111,7 @@ class Arranger(tf.keras.layers.Layer):
         """
         ochlv = inputs[2]
         shape = ochlv.shape
-        closes = ochlv[... , constants.others['data_index'].get_loc('close') ]
+        closes = ochlv[... , constants.others['data_index'].get_loc('prccd') ]
         condition = tf.not_equal(closes, self.nil)
         ragged = tf.ragged.boolean_mask(closes, condition)
         starts = ragged.to_tensor(default_value = 0, shape = (shape[:-1]))[... ,0]
@@ -135,7 +135,7 @@ class Trader(tf.keras.Model):
     def __init__(self, output_shape):
         super(Trader, self).__init__()
         
-        action_dim = output_shape[-1]
+        action_dim = output_shape
         
         #initializing the model layers
         self.arrange = Arranger()

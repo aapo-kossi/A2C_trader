@@ -5,7 +5,6 @@ Created on Sat Dec 12 21:14:53 2020
 @author: Aapo Kössi
 """
 
-import numpy as np
 import tensorflow as tf
 from tensorflow_probability.python.distributions import MultivariateNormalDiag as N
 import constants
@@ -14,11 +13,10 @@ class TradingEnv:
     def __init__(self,
                  train_windows,
                  data_index,
-                 onehots,
+                 sector_cats,
                  action_space,
-                 n_envs = 16,
-                 init_capital = 50000,
-                 noisy = True,
+                 n_envs = constants.N_ENVS,
+                 init_capital = constants.STARTING_CAPITAL,
                  noise_ratio = 0.002,
                  vol_noise_intensity = 10,
                  nec_penalty = 0.0,
@@ -27,9 +25,11 @@ class TradingEnv:
                  render = False):
         
         self.init_capital = tf.cast(init_capital, tf.float32)
-        self.data_index = tf.constant(data_index.to_numpy())
-        self.onehots = tf.repeat(tf.expand_dims(tf.constant(onehots.astype(np.int32).to_numpy()),0), n_envs, axis=0)
-        self.total_days = train_windows.element_spec.shape[0]
+        self.window_data_index = tf.constant(data_index.to_numpy())
+        self.data_index = drop_col(self.window_data_index, constants.others['data_index'].get_loc('date'))
+        self.sector_cats = tf.constant(sector_cats)
+        self.n_secs = self.sector_cats.shape[0]
+        self.total_days = train_windows.element_spec[0].shape[0]
         self.input_days = constants.INPUT_DAYS
         self.action_space = action_space
         self.noisy = noise_ratio > 0.0
@@ -40,7 +40,7 @@ class TradingEnv:
         self.pen_coef = tf.constant([nec_penalty, nes_penalty])
         
         self.num_envs = n_envs
-        self.n_symbols = train_windows.element_spec.shape[1]
+        self.n_symbols = train_windows.element_spec[0].shape[1]
         self.window = iter(train_windows.prefetch(n_envs))
 
         self.capital = tf.Variable(tf.ones((n_envs, 1)) * init_capital)
@@ -50,8 +50,14 @@ class TradingEnv:
         self.day = tf.Variable(self.n_step + self.input_days)
         self.one = tf.ones_like(self.n_step)
         
-        init_ohlcvd = tf.zeros((n_envs,) + self.window.element_spec.shape)
+        init_ohlcvd = tf.zeros((n_envs,) + self.window.element_spec[0].shape[:-1] + (self.window.element_spec[0].shape[-1] - 1,))
         self.ohlcvd = tf.Variable(initial_value=init_ohlcvd)
+        init_conames = tf.fill((self.num_envs,self.n_symbols), '')
+        self.conames = tf.Variable(initial_value=init_conames)
+        init_onehot_sectors = tf.zeros((self.num_envs, self.n_secs - 1, self.n_symbols))
+        self.onehot_secs = tf.Variable(initial_value=init_onehot_sectors)
+        init_dates = tf.zeros((self.num_envs, self.total_days))
+        self.dates = tf.Variable(initial_value = init_dates)
         self.reset()
         self.obs_shape = [x.shape for x in self.current_time_step()]
         print('initialized environment')
@@ -66,7 +72,7 @@ class TradingEnv:
             3: last prices
             4: current capital
         """
-        onehots = tf.cast(self.onehots, tf.float32)
+        onehots = tf.cast(self.onehot_secs, tf.float32)
         equity = tf.cast(self.equity, dtype = tf.float32)
         ohlcvd = tf.stack([self.ohlcvd[i,self.day[i] - self.input_days:self.day[i]] for i in range(self.num_envs)])
         ohlcvd = tf.transpose(ohlcvd, perm = [0,2,1,3])
@@ -82,7 +88,14 @@ class TradingEnv:
     def _reset(self, dones):
         index = tf.where(dones)
         n_dones = tf.size(index)
-        new_ohlcvd = tf.map_fn(lambda i: next(self.window), index, parallel_iterations=16, fn_output_signature=tf.float32)            
+        new_ohlcvd, new_conames, new_secs = tf.map_fn(lambda i: next(self.window), index, parallel_iterations=8, fn_output_signature=(tf.float32, tf.string, tf.float32))            
+        self.conames.scatter_nd_update(index, new_conames)
+        sec_index = tf.cast(new_secs / 5 - 1, tf.int32)  #mapping from GICS sector (0,10,15,20... to index -1,1,2,3...)
+        new_secs = tf.one_hot(sec_index, self.n_secs, axis = 1)[:,1:,:] #drop the first column as it is always empty (corresponds to GICS sector 5, which doesn't exist)
+        new_dates = new_ohlcvd[:,:,0,tf.squeeze(tf.where(self.window_data_index == 'date'))]
+        self.dates.scatter_nd_update(index, new_dates)
+        self.onehot_secs.scatter_nd_update(index, new_secs)
+        new_ohlcvd = drop_col(new_ohlcvd, tf.squeeze(tf.where(self.window_data_index == 'date')))
         if self.noisy:
             new_ohlcvd = self.add_noise(new_ohlcvd)
         self.ohlcvd.scatter_nd_update(index, new_ohlcvd)
@@ -149,21 +162,22 @@ class TradingEnv:
             return tf.logical_and(self.market_closed(), not_finished)
         while tf.reduce_any(get_cond()):
             self.day.assign_add(tf.where(get_cond(),1,0))
+        return
         
     
     def get_mkt_val(self):
         return tf.squeeze(self.capital + tf.reduce_sum(tf.cast(self.equity, tf.float32) * self.get_lasts(), axis = 1, keepdims=True), axis = -1)
     
     def get_lasts(self):
-        lasts_key = tf.constant('close')
+        lasts_key = tf.constant('prccd')
         return self.get_current_val(lasts_key)
         
     def get_div(self):
-        div_key = tf.constant('divCash')
+        div_key = tf.constant('dist')
         return self.get_current_val(div_key)
     
     def market_closed(self):
-        vol_key = tf.constant('volume')
+        vol_key = tf.constant('cshtrd')
         vols = self.get_current_val(vol_key)
         closed = tf.reduce_all(vols == 0.0, axis = 1)
         return closed
@@ -212,6 +226,11 @@ class TradingEnv:
         return noisy
     
     
+def drop_col(tensor, col):
+    before = tensor[...,:col]
+    after = tensor[...,col + 1:]
+    dropped = tf.concat([before, after],-1)
+    return dropped
     
     
     

@@ -160,7 +160,7 @@ class Trader(tf.keras.Model):
         #these are be used to scale the outputs of the policy network
 
         inputs = [tf.cast(x, tf.float64) for x in inputs]
-        [tf.debugging.check_numerics(x, 'input not finite') for x in inputs]
+        [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
         
         (x, e, y, p), orders = self.arrange(inputs[:4])
         c = inputs[4]
@@ -187,7 +187,7 @@ class Trader(tf.keras.Model):
         #concatenates the different inputs and categorizes features across all stocks
         tf.debugging.assert_all_finite(scaled_e, 'scaled equity not finite')
         tf.debugging.assert_all_finite(scaled_p, 'scaled prices not finite')
-        concat = tf.keras.layers.concatenate((x, scaled_e, y, scaled_p))
+        concat = tf.keras.layers.concatenate((x, scaled_e, y))
         # tf.debugging.assert_all_finite(concat, 'concat output not finite')
         main = self.common(concat)
         # tf.debugging.assert_all_finite(main, 'main network not finite')
@@ -201,6 +201,7 @@ class Trader(tf.keras.Model):
         # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
         # tf.debugging.assert_all_finite(mu, 'action means not finite??')
         mu = self.convert_to_nshares((mu, p))
+        
         L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype = tf.float64), tf.linalg.diag(p)), L)
         L_epsilon = tf.linalg.eye(mu.shape[-1], dtype = tf.float64) * constants.l_epsilon
         L = L + L_epsilon

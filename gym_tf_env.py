@@ -41,7 +41,7 @@ class TradingEnv:
         
         self.num_envs = n_envs
         self.n_symbols = train_windows.element_spec[0].shape[1]
-        self.window = iter(train_windows.prefetch(n_envs))
+        self.window = iter(train_windows.prefetch(2 * n_envs))
 
         self.capital = tf.Variable(tf.ones((n_envs, 1)) * init_capital)
         self.equity = tf.Variable(tf.zeros([n_envs, self.n_symbols], dtype = tf.int32))
@@ -78,6 +78,11 @@ class TradingEnv:
         ohlcvd = tf.transpose(ohlcvd, perm = [0,2,1,3])
         lasts = self.get_lasts()
         capital = self.capital
+        # tf.print(tf.math.reduce_any(tf.math.is_nan(onehots)))
+        # tf.print(tf.math.reduce_any(tf.math.is_nan(equity)))
+        # tf.print(tf.math.reduce_any(tf.math.is_nan(ohlcvd)))
+        # tf.print(tf.math.reduce_any(tf.math.is_nan(lasts)))
+        # tf.print(tf.math.reduce_any(tf.math.is_nan(capital)))
         return [ tf.convert_to_tensor(ob, dtype=tf.float32) for ob in [onehots, equity, ohlcvd, lasts, capital]]
     
     def reset(self):
@@ -88,6 +93,7 @@ class TradingEnv:
     def _reset(self, dones):
         index = tf.where(dones)
         n_dones = tf.size(index)
+        # tf.print(f'resetting {n_dones} envs')
         new_ohlcvd, new_conames, new_secs = tf.map_fn(lambda i: next(self.window), index, parallel_iterations=8, fn_output_signature=(tf.float32, tf.string, tf.float32))            
         self.conames.scatter_nd_update(index, new_conames)
         sec_index = tf.cast(new_secs / 5 - 1, tf.int32)  #mapping from GICS sector (0,10,15,20... to index -1,1,2,3...)
@@ -107,12 +113,13 @@ class TradingEnv:
         self.n_step.scatter_nd_update(index, new_step)
         new_day = new_step + self.input_days
         self.day.scatter_nd_update(index, new_day)
-        self.advance_to_wday()
+        # self.advance_to_wday()
         return
         
     #faster performance step function
     @tf.function
     def step(self, action, penalties):
+        tf.debugging.assert_all_finite(action, 'action not finite...')
         # tf.print('env equity:')
         # tf.print(self.equity, summarize = 160)
         # tf.print(self.capital, summarize = 16)
@@ -129,7 +136,7 @@ class TradingEnv:
         tf.debugging.assert_non_negative(self.capital, 'negative capital')
 
         self.day.assign_add(self.one)
-        self.advance_to_wday()
+        # self.advance_to_wday()
             
         self.n_step.assign_add(self.one)
         dones = self.day >= self.total_days
@@ -156,13 +163,13 @@ class TradingEnv:
         returns = profit / last_mkt_val * 100
         return returns
     
-    def advance_to_wday(self):
-        def get_cond():
-            not_finished = self.day < self.total_days
-            return tf.logical_and(self.market_closed(), not_finished)
-        while tf.reduce_any(get_cond()):
-            self.day.assign_add(tf.where(get_cond(),1,0))
-        return
+    # def advance_to_wday(self):
+    #     def get_cond():
+    #         not_finished = self.day < self.total_days
+    #         return tf.logical_and(self.market_closed(), not_finished)
+    #     while tf.reduce_any(get_cond()):
+    #         self.day.assign_add(tf.where(get_cond(),1,0))
+    #     return
         
     
     def get_mkt_val(self):
@@ -176,11 +183,11 @@ class TradingEnv:
         div_key = tf.constant('dist')
         return self.get_current_val(div_key)
     
-    def market_closed(self):
-        vol_key = tf.constant('cshtrd')
-        vols = self.get_current_val(vol_key)
-        closed = tf.reduce_all(vols == 0.0, axis = 1)
-        return closed
+    # def market_closed(self):
+    #     vol_key = tf.constant('cshtrd')
+    #     vols = self.get_current_val(vol_key)
+    #     closed = tf.reduce_all(vols == 0.0, axis = 1)
+    #     return closed
         
     def get_current_val(self, feature):
         # today =  tf.stack([self.ohlcvd[i,self.day[i] - 1] for i in range(self.num_envs)])

@@ -6,6 +6,7 @@ Created on Sun Dec  6 21:53:48 2020
 """
 import time
 import os.path as osp
+import constants
 
 import tensorflow as tf
 import numpy as np
@@ -190,7 +191,7 @@ def learn(
             #TODO implement model weight saving
             raise SystemExit
             network.save_weights()
-        if update % val_interval == 0 & val_env is not None:
+        if update % val_interval == 0 and val_env is not None:
             obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
             total_rewards = tf.reduce_sum(rewards) / val_env.num_envs
             neglogpac, _ = neglogp(raw_actions, mus, Ls)
@@ -201,15 +202,15 @@ def learn(
             print(f'at update {update}, validation trajectory average total rewards {total_rewards:.6f}. ')
             print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}\n     entropy loss {entropy_loss:.3f}')
             closes = obs[3]
-            y_rew = tf.math.cumprod(rewards / 100 + 1.0)
-            x = range(rewards.shape[1])
+            y_rew = tf.math.cumprod(rewards / 100 + 1.0)[:constants.VAL_STEPS]
+            x = range(rewards.shape[0])[:constants.VAL_STEPS]
             ax.clear()
             ax.plot(x, y_rew, 'r--')
             for i in range(1,closes.shape[-1]):
-                ticker_price = closes[0,:,i]
+                ticker_price = closes[:constants.VAL_STEPS,i]
                 ax.plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
             plt.show()
-            plt.pause(0.01)
+            plt.pause(0.1)
             
     return model
 

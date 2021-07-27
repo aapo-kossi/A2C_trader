@@ -14,7 +14,7 @@ def add(name, val):
 
 
 MIN_DAYS_AVLB = 250
-MIN_AVG_VOL = 1e5
+MIN_AVG_VOL = 5e4
 # MIN_MIN_VOL = 5e3
 DEFAULT_TICKERS = 10
 NUM_MODELS = 1

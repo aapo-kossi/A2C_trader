@@ -169,7 +169,7 @@ def preprocess(df):
         # print('enough datapoints to include')
         df.sort_index(inplace=True)
         sector_list.append(df.gsector.iloc[0])
-        conames.append(df['conm'].iloc[0])
+        conames.append(df.conm.iloc[0])
         df.drop(['conm'],axis=1,inplace = True)
         unique = ~df.index.duplicated(keep='first')
         df = df[unique]

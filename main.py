@@ -90,8 +90,6 @@ def split_ds(filedata):
 
 
 
-def align_ragged_dates(values, index):
-    pass
 
 def make_sliding_windows(ds, length):
     windows = ds.window(length, shift = constants.WINDOW_DIFF, drop_remainder = True)

@@ -28,14 +28,14 @@ def onehot_encode(lst):
     one_hot = pd.get_dummies(as_df['categories'], dtype=np.bool_)
     return one_hot
 
-def preprocess_chunk(df, dates, arrs):
+def preprocess_chunk(df, dates, arrs, min_days):
     startdate, (start, end) = dates
     df = df[df['curcdd'] == 'USD']
     unique = ~df.index.duplicated(keep='first')
     df = df[unique]
     df = df.loc[df.index.get_level_values(1) < end]
     df = df.loc[df.index.get_level_values(1) >= start]
-    if df.shape[0] < constants.MIN_DAYS_AVLB: return None, arrs
+    if df.shape[0] < min_days: return None, arrs
     avg_vol = df['cshtrd'].sum() / df.shape[0]
     if avg_vol < constants.MIN_AVG_VOL: return None, arrs
     # print('enough datapoints to include')
@@ -59,7 +59,6 @@ def preprocess_chunk(df, dates, arrs):
             arrs[key] = np.append(arr, tgtmap[key])
         except KeyError: continue
     df.drop(['conm'],axis=1,inplace = True)
-    df.drop(['gsector'], axis='columns', inplace=True)
     return df, arrs
 
 
@@ -85,11 +84,11 @@ def main():
     enddate = raw_arrs['enddate']
     lens = raw_arrs['lens']
     train_arrs = {'sector_list': np.array([]),
-            'lens': np.array([]),
+            'lens': np.array([], dtype=np.int64),
             'conames': np.char.array([])}
     eval_arrs = train_arrs.copy()
     test_arrs = train_arrs.copy()
-    arr_dicts = {'train': train_arrs, 'eval': eval_arrs, 'test': test_arrs, }
+    arr_dicts = {'train': train_arrs, 'eval': eval_arrs, 'test': test_arrs}
     
     start = time.time()
 
@@ -97,7 +96,8 @@ def main():
                  dtype = {'cheqv': np.float32, 'divd': np.float32,'divsp': np.float32,'cshtrd': np.float32,'prccd': np.float32,
                           'prcod': np.float32,'prchd': np.float32,'prcld': np.float32,'gsector': np.float32},
                  iterator = True)
-    for n, nrows in enumerate(lens):
+    counters = [0,0,0]
+    for nrows in lens:
         df = df_iterator.get_chunk(nrows)
         read += nrows
         dateindex = df.index.get_level_values(1)
@@ -111,11 +111,13 @@ def main():
         test_start = eval_end - constants.INPUT_DAYS
         test_end = enddate + 1
         datedict = {'train': (train_start, train_end),'eval': (eval_start, eval_end),'test': (test_start, test_end)}
-        for label in ['train','eval','test']:        
-            processed_df, arrs = preprocess_chunk(df, (startdate, datedict[label]), arr_dicts[label])
+        for counter_idx, label in enumerate(['train','eval','test']):
+            processed_df, arrs = preprocess_chunk(df, (startdate, datedict[label]), arr_dicts[label], constants.MIN_DAYS_AVLB[counter_idx])
     
             if processed_df is None: continue
-            valid_name = "".join(x for x in arrs["conames"][-1] if x.isalnum())
+            counter_str = str(counters[counter_idx]).zfill(6)
+            valid_name = f'{counter_str}_{"".join(x for x in arrs["conames"][-1] if x.isalnum())}'
+            counters[counter_idx] += 1
             processed_df.to_csv(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm3_processed/{label}/{valid_name}.csv')
         print(f'rows processed so far: {read}\ntime taken: {time.time() - start:.3f}', end = '\033[A\r', flush=True)
         
@@ -123,7 +125,7 @@ def main():
 
     for label in ['train','eval','test']:
         np.savez(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm3_processed/{label}/identifiers.npz',
-                 arr_dicts[label])
+                 **arr_dicts[label])
         
     
 if __name__ == '__main__':

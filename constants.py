@@ -6,6 +6,7 @@ Created on Fri Oct 23 16:01:11 2020
 """
 import string
 
+#others are basically extra-ugly global variables
 others= {}
 i = 0
 def add(name, val):
@@ -13,15 +14,15 @@ def add(name, val):
     
 
 
-MIN_DAYS_AVLB = 250
+MIN_DAYS_AVLB = [1500, 250, 250]
 MIN_AVG_VOL = 5e4
 # MIN_MIN_VOL = 5e3
 DEFAULT_TICKERS = 10
 NUM_MODELS = 1
 VAL_TIME = 2*360
 TEST_TIME = 2*360
-VAL_STEPS = 200
-TEST_STEPS = 200
+VAL_STEPS = 300
+TEST_STEPS = 300
 INPUT_DAYS = 90
 WINDOW_LENGTH = 150
 WINDOW_DIFF = 60
@@ -47,7 +48,10 @@ T_MUL = 2.0
 M_MUL = 1.5
 LR_ALPHA = 1e-3
 EP_SHUFFLE_BUF = 256
-CORRUPT_CONAMES = ['TRAVEL + LEISURE CO', 'COMMCAST']
+GVKEYS_TO_SKIP = {'train': [3226],
+                   'test': [],
+                   'eval': []}
+SPLIT_LABELS = ['train','eval','test']
 
 
 

@@ -5,6 +5,8 @@ Created on Mon Oct  5 21:30:53 2020
 @author: Aapo Kössi
 """
 
+import glob
+import csv
 import time
 import math
 import numpy as np
@@ -25,70 +27,10 @@ import TradingModel
 import constants
 #accesses datasets, starts training pipeline, monitors progress
 
-@dataclass
-class FileData:
-    dataset: tf.RaggedTensor
-    data_index: pd.Index
-    tickers: List[str]
-    sectors: List[float]
-    sec_cats: np.array
-    num_tickers: int
-    lens: List[int]
-    
-
 
 def get_cats(lst):
     unique = pd.Series(lst).unique()[:-1]
     return unique
-
-def datetime_to_number(dt_index):
-    first = dt_index.min()
-    numerical_index = dt_index.map(lambda val: (val - first).days.astype('float'))
-    tot_days = numerical_index.max().astype('int')
-    constants.others['TOTAL_DAYS'] = tot_days
-    return numerical_index
-
-def split_ds(filedata):
-
-    dateidx = filedata.data_index.get_loc('date')
-    enddate = constants.others['TOTAL_DAYS']
-    overlap_days = constants.INPUT_DAYS
-    test_startdate = enddate - (overlap_days + constants.TEST_TIME)
-    val_enddate = enddate - constants.TEST_TIME
-    val_startdate = test_startdate - constants.VAL_TIME
-    train_enddate = val_startdate + overlap_days
-
-    train_mask = filedata.dataset[...,dateidx] < train_enddate
-    train_ds = tf.ragged.boolean_mask(filedata.dataset,train_mask)
-    co_ds = tf.data.Dataset.from_tensor_slices(filedata.tickers)
-    sec_ds = tf.data.Dataset.from_tensor_slices(tf.constant(filedata.sectors, dtype=tf.float32))
-    train_ds = tf.data.Dataset.from_tensor_slices(train_ds)
-    train_ds = tf.data.Dataset.zip((train_ds, co_ds, sec_ds))
-    train_ds = train_ds.repeat().shuffle(8192).batch(constants.others['n_stocks'],\
-                                                                            drop_remainder=True, num_parallel_calls = tf.data.AUTOTUNE)
-
-    val_mask = tf.logical_and(filedata.dataset[...,dateidx] >= val_startdate, filedata.dataset[...,dateidx] < val_enddate)
-    val_ds = tf.ragged.boolean_mask(filedata.dataset,val_mask)
-    val_ds = tf.data.Dataset.from_tensor_slices(val_ds)
-    val_ds = tf.data.Dataset.zip((val_ds, co_ds, sec_ds))
-    val_ds = val_ds.repeat(16).shuffle(2048, seed=0).batch(constants.others['n_stocks'], drop_remainder=True)
-
-    test_mask= filedata.dataset[...,dateidx] >= test_startdate
-    test_ds = tf.ragged.boolean_mask(filedata.dataset,test_mask)
-    test_ds = tf.data.Dataset.from_tensor_slices(test_ds)
-    test_ds = tf.data.Dataset.zip((test_ds, co_ds, sec_ds))
-    test_ds = test_ds.repeat(16).shuffle(2048, seed=1).batch(constants.others['n_stocks'], drop_remainder=True)
-    
-    # daily_ds = ds.batch(n_tickers, drop_remainder=True)
-    
-    # train_ds = daily_ds.take(int(constants.TRAIN_TIME * constants.TOTAL_TIME))
-    # val_ds   = daily_ds.skip(int(constants.TRAIN_TIME * constants.TOTAL_TIME)-constants.INPUT_DAYS)
-    # val_ds   = val_ds.take(constants.INPUT_DAYS + int(constants.VAL_TIME * constants.TOTAL_TIME))
-    # test_ds  = daily_ds.skip(int(constants.TOTAL_TIME * (1 - constants.TEST_TIME)) - constants.INPUT_DAYS)
-    # test_ds  = test_ds.take(constants.INPUT_DAYS + int(constants.TEST_TIME * constants.TOTAL_TIME))
-    return train_ds, val_ds, test_ds
-
-
 
 
 def make_sliding_windows(ds, length):
@@ -100,29 +42,26 @@ def make_sliding_windows(ds, length):
                                               tf.data.experimental.get_single_element(secs.take(1))))                                             # WE OUT HERE TAKIN' NAMES
     return single_elem_windows
 
-def filter_ds(ds):
-    ds = ds.filter(lambda x, names, secs: tf.math.reduce_all(tf.math.reduce_any(x != 0, axis=2)))
-    return ds
-    
-
-
 
 def window(batch, names, sectors, window_len = constants.WINDOW_LENGTH):
     
-    tf.debugging.assert_all_finite(batch.to_tensor(), 'unaligned batch of stocks not all finite values')
-    days = batch[...,constants.others['data_index'].get_loc('date')]
-    dayvals = tf.cast(days.values, tf.int64)#.to_tensor()
-    dayrows = days.value_rowids()#.to_tensor()
-    idx = tf.stack([dayrows, dayvals],axis=-1)
+    tf.debugging.assert_all_finite(batch, 'unaligned batch of stocks not all finite values')
+    s = tf.shape(batch)
+    static_s = batch.shape
+    day = batch[...,constants.others['data_index'].get_loc('date')]
+    day = tf.cast(tf.reshape(day, [-1, ]), tf.int64)#.to_tensor()
+    dayrow = tf.repeat(tf.range(s[0], dtype=tf.int64), s[1])
+    idx = tf.stack([dayrow, day],axis=-1)
     # print(idx)
     # print(dayvals.shape)
     # print(dayrows.shape)
     # print(idx.shape)
     # batch = tf.sparse.SparseTensor(idx, batch.flat_values, [constants.others['n_stocks'], constants.TOTAL_TIME, constants.others['data_index'].size])
-    batch = tf.scatter_nd(idx, batch.flat_values, [constants.others['n_stocks'], constants.others['TOTAL_DAYS'] + 1, constants.others['data_index'].size])
+    batch = tf.scatter_nd(idx, tf.reshape(batch, [-1, s[2]]), [constants.others['n_stocks'], constants.others['enddate'] + 1, static_s[2]])
     batch = tf.transpose(batch, perm = [1,0,2])
     tf.debugging.assert_all_finite(batch, 'batch of stocks not all finite values')
-    batch = tf.gather(batch, tf.where(tf.math.reduce_all(tf.math.reduce_any(batch != 0, axis = 2),axis=1)))
+    avlbl_idx = tf.where(tf.math.reduce_all(tf.math.reduce_any(batch != 0, axis = 2),axis=1))
+    batch = tf.gather(batch, avlbl_idx)
     batch = tf.squeeze(batch, axis = 1)
     batch_ds = tf.data.Dataset.from_tensor_slices(batch)
     names_repeated = tf.repeat(tf.expand_dims(names, 0), tf.shape(batch)[0], axis = 0)
@@ -135,65 +74,29 @@ def window(batch, names, sectors, window_len = constants.WINDOW_LENGTH):
     #keep windows that have stock data for all stocks on the same days, drop otherwise
     return labeled_ds
 
+
+def prepare_ds(ds, arrs, training = False, window_l = constants.WINDOW_LENGTH, n_envs = None, seed = None):
+    ds = fetch_csvs(ds, arrs['lens'])
+    ds = zip_identifiers(ds, arrs)
+    if not training:
+        ds = ds.repeat(16).shuffle(len(arrs['lens']))
+        padded_l = arrs['lens'].max()
+        ds = ds.map(lambda *x: pad_to_max_days(padded_l, *x), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.batch(constants.others['n_stocks'], drop_remainder = True, num_parallel_calls = tf.data.AUTOTUNE)
+        ds = ds.interleave(lambda *x: window(*x, window_len = window_l), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.shuffle(128, seed = seed).take(n_envs).cache().repeat()
+    else:
+        ds = ds.cache().repeat().shuffle(len(arrs['lens']))
+        padded_l = arrs['lens'].max()
+        ds = ds.map(lambda *x: pad_to_max_days(padded_l, *x), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.batch(constants.others['n_stocks'], drop_remainder = True, num_parallel_calls = tf.data.AUTOTUNE)
+        ds = ds.interleave(window, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.shuffle(constants.EP_SHUFFLE_BUF)
+    return ds
+
 def contains_special(string):
     bools = list(map(lambda char: char in constants.SPECIAL_CHARS, string))
     return any(bools)
-
-def preprocess(df):
-    df = df[df['curcdd']=='USD']
-    df.drop(['curcdd'], axis='columns', inplace=True)
-    print(df.head())
-    df['ajexdi'] = df['ajexdi'].replace(0,1)
-    df[['prccd','prchd','prcld','prcod','divd','divsp']] = \
-        df[['prccd','prchd','prcld','prcod','divd','divsp']].multiply(
-        df['ajexdi'] ** -1,axis = 'index')
-    df.fillna(0, inplace=True)
-    df['dist'] = df['cheqv'] + df['divd'] + df['divsp']
-    df.drop(['ajexdi','cheqv','divd','divsp'],axis='columns', inplace=True)
-    print('did initial preprocessing')
-    ticker_dfs = list(df.groupby('GVKEY', sort=False))
-    del df
-    nested_datalists= []
-    sector_list = []
-    lens = []
-    conames = []
-    print('starting loop')
-    for gvkey, df in ticker_dfs:
-        if df.shape[0] < constants.MIN_DAYS_AVLB: continue
-        # min_vol = df['cshtrd'].min()
-        # if min_vol < constants.MIN_MIN_VOL: continue
-        avg_vol = df['cshtrd'].sum() / df.shape[0]
-        if avg_vol < constants.MIN_AVG_VOL: continue
-        # print('enough datapoints to include')
-        df.sort_index(inplace=True)
-        sector_list.append(df.gsector.iloc[0])
-        conames.append(df.conm.iloc[0])
-        df.drop(['conm'],axis=1,inplace = True)
-        unique = ~df.index.duplicated(keep='first')
-        df = df[unique]
-        df.reset_index(level=1, inplace=True)
-        df.rename({'datadate':'date'},axis=1,inplace=True)
-        # df['date'] = df['date'].astype('float')
-        # print('dropped duplicate days')
-        nested_datalists.append(df)
-        lens.append(df.shape[0])
-    print('finished loop')
-    # df = pd.concat(processed_dfs).reset_index(level = 1)
-    print(lens)
-    print(len(lens))
-    print('got complete nested data')
-    df = pd.concat(nested_datalists)
-    df.drop(['gsector'], axis='columns', inplace=True)
-    data_index = df.columns
-    dataset = tf.constant(df.to_numpy(), dtype = tf.float32)
-    del df
-    tf.debugging.assert_all_finite(dataset, 'original original tensor not finite')
-    dataset = tf.RaggedTensor.from_row_lengths(values = dataset, row_lengths = lens)    
-    sec_cats = get_cats(sector_list)
-    num_tickers = len(conames)
-    complete_data = FileData(dataset, data_index, conames, sector_list, sec_cats, num_tickers, lens)
-    return complete_data
-    
 
 def vis(state):
 
@@ -221,6 +124,57 @@ def vis(state):
             state.reset()
 
 
+def apply_to_split(func):
+    many = [func(label) for label in constants.SPLIT_LABELS]
+    return tuple(many)
+
+def load_ids(parent):
+    load_id_func = lambda x: np.load(f'{parent}/{x}/identifiers.npz', allow_pickle=True)
+    return apply_to_split(load_id_func)
+
+def load_datasets(parent):
+    def load_ds_func(x):
+        globbed = f'{parent}/{x}/*.csv'
+        names = glob.glob(globbed)
+        return tf.data.Dataset.from_tensor_slices(names)
+    
+    return apply_to_split(load_ds_func)
+
+def zip_identifiers(dataset, arrs):
+    co_ds  = tf.data.Dataset.from_tensor_slices(arrs['conames'])
+    sec_ds = tf.data.Dataset.from_tensor_slices(arrs['sector_list'].astype(np.float32))
+    dataset = tf.data.Dataset.zip((dataset, co_ds, sec_ds))
+    return dataset
+
+def fetch_csvs(dataset, lens):
+    def map_fn(l, filename):
+        file_ds = tf.data.experimental.CsvDataset(filename, [tf.float32] * 8,
+                                                  exclude_cols=[0], header=True) #TODO: investigate buffer size
+        file_ds = file_ds.batch(batch_size = l, drop_remainder=True).map(lambda *features: tf.stack(features, -1))
+        return file_ds
+    len_ds = tf.data.Dataset.from_tensor_slices(lens)
+    dataset = tf.data.Dataset.zip((len_ds, dataset))
+    dataset = dataset.interleave(map_fn, num_parallel_calls = tf.data.AUTOTUNE)
+    return dataset
+    
+def pad_to_max_days(l, elem, name, sec):
+    true_days = tf.shape(elem)[0]
+    paddings = [[0,l - true_days],[0,0]]
+    return tf.pad(elem, paddings), name, sec
+
+def get_data_index(folderpath):
+    filepath = f'{folderpath}/train/*.csv'
+    first = next(glob.iglob(filepath))
+    with open(first, 'r') as file:
+        input_csv = csv.reader(file)
+        cols = next(input_csv, [])[1:]
+    return pd.Index(cols)
+
+def get_enddate(folderpath):
+    npz = np.load(f'{folderpath}/ccm3_raw_lens.npz', allow_pickle=True)
+    return npz['enddate']
+        
+
 def main():
     
     print('started')
@@ -232,85 +186,76 @@ def main():
     parser = argparse.ArgumentParser(description='Train a neural network to trade n stocks concurrently, '\
                                                  'provided a .csv file of stock data.')
 
-    parser.add_argument('-f', '--filepath', help = 'path of the .csv input file', type=str)
+    parser.add_argument('-d', '--input_dir', help = 'path to the dir including processed csv split into train, eval and test dirs', type=str)
     parser.add_argument('-n', '--num_stocks', help = 'number of stocks the model is to have as an input', type=str)
     args = parser.parse_args()
 
-    filepath = args.filepath
-
-    df = pd.read_csv(filepath, index_col = [0,1], parse_dates=True, usecols = [0,2,3,4,5,6,7,8,9,10,11,12,13,15],
-                     dtype = {'cheqv': np.float32, 'divd': np.float32,'divsp': np.float32,'cshtrd': np.float32,'prccd': np.float32,
-                              'prcod': np.float32,'prchd': np.float32,'prcld': np.float32,'gsector': np.float32})
-    dateindex = df.index.get_level_values(1)
-    num_idx = datetime_to_number(dateindex)
-    df.reset_index(level=1, inplace=True, drop=True)
-    df.set_index(num_idx, append=True, inplace=True)
-    df.astype(np.float32, copy=False, errors='ignore')
-    complete_data = preprocess(df)
-        
-    #TODO: can't imagine next line follows any sort of best practices
-    constants.add('data_index', complete_data.data_index)
     if args.num_stocks is not None:
         constants.add('n_stocks', args.num_stocks)
     else: constants.add('n_stocks', constants.DEFAULT_TICKERS)
 
-    tf.debugging.assert_all_finite(complete_data.dataset.to_tensor(default_value=0), 'original tensor not finite')
-    train_ds, val_ds, test_ds = split_ds(complete_data)
-    train_ds = train_ds.flat_map(window).prefetch(32)
-    # map(window, num_parallel_calls=tf.data.AUTOTUNE).flat_map(lambda *x: tf.data.Dataset.zip(*x)).prefetch(32)
-
+    parentdir = args.input_dir
+    constants.add('data_index', get_data_index(parentdir))
+    constants.add('enddate', get_enddate(parentdir))
     
+    train_arrs, eval_arrs, test_arrs = load_ids(parentdir)
+    sec_cats = get_cats(train_arrs['sector_list'])
+    train_ds, eval_ds, test_ds = load_datasets(parentdir)
+    train_ds = prepare_ds(train_ds, train_arrs, training=True)
     
-    val_ds = val_ds.flat_map(lambda data, names, sectors: window(data, names, sectors, window_len=constants.INPUT_DAYS + constants.VAL_STEPS))
-    val_ds = val_ds.shuffle(32, seed = 2).take(constants.N_VAL_ENVS).cache().repeat()
-    test_ds = test_ds.flat_map(lambda data, names, sectors: window(data, names, sectors, window_len=constants.INPUT_DAYS + constants.TEST_STEPS))
-    test_ds = test_ds.shuffle(32, seed = 1).take(constants.N_TEST_ENVS).cache().repeat()
+    eval_ds = prepare_ds(eval_ds, eval_arrs,
+                         window_l = constants.INPUT_DAYS + constants.VAL_STEPS,
+                         n_envs = constants.N_VAL_ENVS, seed = 0)
     
-    #organize the training dataset into shuffled windows
-    # train_ds = train_ds.shuffle(constants.EP_SHUFFLE_BUF)
-    eval_steps = constants.VAL_TIME
-    test_steps = constants.TEST_TIME
-    # val_ds = val_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + eval_steps))
-    # test_ds = test_ds.apply(lambda x: make_sliding_windows(x, constants.INPUT_DAYS + test_steps))
-
-    # reversed_ticker_dict = {float(value) : key for (key, value) in complete_data.ticker_dict.items()}
+    test_ds = prepare_ds(test_ds, test_arrs,
+                         window_l = constants.INPUT_DAYS + constants.TEST_STEPS,
+                         n_envs = constants.N_TEST_ENVS, seed = 1)
 
 
-    
     # start = time.time()
-    # for _ in val_ds:
-    #     print(time.time() - start)
+    # for n, elem in enumerate(test_ds):
+    #     print(n)
+    #     taken = time.time() - start
+    #     print(f'current fps: {n / taken}')
+    #     # tf.print(elem, summarize = -1)
+    #     # break
+    # raise SystemExit
 
     #visualized train_windows of stock performances
 
-    # mock_env = TradingEnv(test_ds,
-    #               complete_data.data_index,
-    #               complete_data.sec_cats,
-    #               tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
-    #               noise_ratio = 0.0)
+    mock_env = TradingEnv(test_ds,
+                  constants.others['data_index'],
+                  sec_cats,
+                  tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
+                  noise_ratio = 0.0)
     
-    # vis(mock_env)
+    vis(mock_env)
 
 
     
     # initialize envs and model
     output_shape = tf.constant((constants.others['n_stocks']), dtype = tf.int32)   
-    vec_trading_env = TradingEnv(train_ds, complete_data.data_index,
-                                complete_data.sec_cats, (output_shape,),
+    vec_trading_env = TradingEnv(train_ds, constants.others['data_index'],
+                                sec_cats, (output_shape,),
                                 n_envs = constants.N_ENVS,
                                 init_capital = 50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO)
    
-    val_env = TradingEnv(val_ds, complete_data.data_index, complete_data.sec_cats,
-                          (output_shape,),n_envs= constants.N_VAL_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO)
+    eval_env = TradingEnv(eval_ds, constants.others['data_index'], sec_cats,
+                          (output_shape,),n_envs= constants.N_VAL_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0)
+
+    test_env = TradingEnv(test_ds, constants.others['data_index'], sec_cats,
+                          (output_shape,),n_envs= constants.N_TEST_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0)
+
     model = TradingModel.Trader(output_shape)
 
     # learn using a2c algorithm
     learn(model,
           vec_trading_env,
-          val_env = val_env,
+          val_env = eval_env,
+          test_env = test_env,
           steps_per_update=constants.N_STEPS_UPDATE,
-          eval_steps=int(eval_steps),
-          test_steps=int(test_steps),
+          eval_steps=constants.VAL_TIME,
+          test_steps=constants.TEST_TIME,
           init_lr = constants.INIT_LR,
           decay_steps = constants.INIT_DECAY_STEPS,
           decay_rate= constants.DECAY_RATE,

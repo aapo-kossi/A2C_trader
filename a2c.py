@@ -123,6 +123,7 @@ def learn(
     network,
     env,
     val_env = None,
+    test_env = None,
     steps_per_update=5,
     eval_steps = 100,
     test_steps = 100,

@@ -14,8 +14,6 @@ from tensorflow_probability.python.distributions import MultivariateNormalTriL a
 
 
 #TODO: implement hparam optimization
-#TODO: something happens between first and second call that fucks up raw_actions or mu.
-# HOW THE F UCK???????????++++??????????+++?++++??+
 
         
 class Cholesky_from_z(tf.keras.layers.Layer):

@@ -12,8 +12,6 @@ import math
 import numpy as np
 import pandas as pd
 import argparse
-from dataclasses import dataclass
-from typing import List
 
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
@@ -103,7 +101,7 @@ def vis(state):
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1)
     while True:
-        print(state.ohlcvd[0,:4,0,0])
+        print(state.dates[:,0])
         for i in range(constants.N_ENVS):
             ydata = state.ohlcvd[i,...,constants.others['data_index'].get_loc('prccd')]
             for j in range(constants.others['n_stocks']):
@@ -148,8 +146,8 @@ def zip_identifiers(dataset, arrs):
 
 def fetch_csvs(dataset, lens):
     def map_fn(l, filename):
-        file_ds = tf.data.experimental.CsvDataset(filename, [tf.float32] * 8,
-                                                  exclude_cols=[0], header=True) #TODO: investigate buffer size
+        file_ds = tf.data.experimental.CsvDataset(filename, [tf.float32] * 7,
+                                                  exclude_cols=[0, 7], header=True) #TODO: investigate buffer size
         file_ds = file_ds.batch(batch_size = l, drop_remainder=True).map(lambda *features: tf.stack(features, -1))
         return file_ds
     len_ds = tf.data.Dataset.from_tensor_slices(lens)
@@ -167,8 +165,10 @@ def get_data_index(folderpath):
     first = next(glob.iglob(filepath))
     with open(first, 'r') as file:
         input_csv = csv.reader(file)
-        cols = next(input_csv, [])[1:]
-    return pd.Index(cols)
+        cols = next(input_csv, [])
+    data_index = pd.Index(cols)
+    data_index = data_index.drop(['gsector', 'GVKEY'])
+    return data_index
 
 def get_enddate(folderpath):
     npz = np.load(f'{folderpath}/ccm3_raw_lens.npz', allow_pickle=True)
@@ -223,13 +223,13 @@ def main():
 
     #visualized train_windows of stock performances
 
-    mock_env = TradingEnv(test_ds,
-                  constants.others['data_index'],
-                  sec_cats,
-                  tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
-                  noise_ratio = 0.0)
+    # mock_env = TradingEnv(train_ds,
+    #               constants.others['data_index'],
+    #               sec_cats,
+    #               tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
+    #               noise_ratio = 0.0)
     
-    vis(mock_env)
+    # vis(mock_env)
 
 
     

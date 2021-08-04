@@ -157,7 +157,8 @@ class Trader(tf.keras.Model):
         #generating simplest bounds for action space
         #these are be used to scale the outputs of the policy network
 
-        inputs = [tf.cast(x, tf.float64) for x in inputs]
+        # inputs = [tf.cast(x, tf.float64) for x in inputs]
+
         [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
         
         (x, e, y, p), orders = self.arrange(inputs[:4])
@@ -176,6 +177,7 @@ class Trader(tf.keras.Model):
         #rescaling current equity and stock prices for the main network
         scaled_p = self.price_scaler((p, c))
         scaled_e = self.equity_scaler([e, scaled_p])
+        scaled_p = self.normalizer((scaled_p, 1))
 
         #dense network for recognising temporal features, convolutional might be more effective
         y = self.normalizer((y, 2))
@@ -185,7 +187,7 @@ class Trader(tf.keras.Model):
         #concatenates the different inputs and categorizes features across all stocks
         tf.debugging.assert_all_finite(scaled_e, 'scaled equity not finite')
         tf.debugging.assert_all_finite(scaled_p, 'scaled prices not finite')
-        concat = tf.keras.layers.concatenate((x, scaled_e, y))
+        concat = tf.keras.layers.concatenate((x, scaled_e, y, scaled_p))
         # tf.debugging.assert_all_finite(concat, 'concat output not finite')
         main = self.common(concat)
         # tf.debugging.assert_all_finite(main, 'main network not finite')
@@ -227,7 +229,7 @@ class Trader(tf.keras.Model):
         # tf.print(tf.cast(dist2.log_prob(raw_action),tf.int32))
         #ensuring that sample is also in bounds
         action, _ = self.buy_limiter((raw_action, c, p))
-        action = self.clip_selling((action, -e))  
+        action = self.clip_selling((action, -e))
 
         # dummy penalties for trying to short, not possible with current model architecture
         neg_shares = tf.fill(c.shape, False) 

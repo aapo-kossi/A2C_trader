@@ -14,7 +14,7 @@ import pandas as pd
 import argparse
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 tf.keras.backend.set_floatx('float64')
 
@@ -186,8 +186,12 @@ def main():
     parser = argparse.ArgumentParser(description='Train a neural network to trade n stocks concurrently, '\
                                                  'provided a .csv file of stock data.')
 
+    parser.add_argument('save_path', help = 'path to the folder used to save model weights as checkpoints', type = str)
     parser.add_argument('-d', '--input_dir', help = 'path to the dir including processed csv split into train, eval and test dirs', type=str)
     parser.add_argument('-n', '--num_stocks', help = 'number of stocks the model is to have as an input', type=str)
+    parser.add_argument('-c', '--checkpoint', help = 'specify a checkpoint file to load weights from, if unspecified, will initiate model from scratch', type = str)
+    parser.add_argument('-l', '--use_latest', help = 'use latest checkpoint to continue training', action = 'store_true')
+
     args = parser.parse_args()
 
     if args.num_stocks is not None:
@@ -197,6 +201,10 @@ def main():
     parentdir = args.input_dir
     constants.add('data_index', get_data_index(parentdir))
     constants.add('enddate', get_enddate(parentdir))
+
+
+    init_ckpt = args.checkpoint
+    if args.use_latest: init_ckpt = 'latest'
     
     train_arrs, eval_arrs, test_arrs = load_ids(parentdir)
     sec_cats = get_cats(train_arrs['sector_list'])
@@ -238,19 +246,24 @@ def main():
     vec_trading_env = TradingEnv(train_ds, constants.others['data_index'],
                                 sec_cats, (output_shape,),
                                 n_envs = constants.N_ENVS,
-                                init_capital = 50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO)
+                                init_capital = 50000, MAR = constants.RF, noise_ratio=constants.NOISE_RATIO,
+                                cost_per_share=constants.COST_PER_SHARE)
    
     eval_env = TradingEnv(eval_ds, constants.others['data_index'], sec_cats,
-                          (output_shape,),n_envs= constants.N_VAL_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0)
+                          (output_shape,),n_envs= constants.N_VAL_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0,
+                          cost_per_share=constants.COST_PER_SHARE)
 
     test_env = TradingEnv(test_ds, constants.others['data_index'], sec_cats,
-                          (output_shape,),n_envs= constants.N_TEST_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0)
+                          (output_shape,),n_envs= constants.N_TEST_ENVS, init_capital=50000, MAR = constants.RF, noise_ratio= 0.0,
+                          cost_per_share=constants.COST_PER_SHARE)
 
     model = TradingModel.Trader(output_shape)
 
     # learn using a2c algorithm
     learn(model,
           vec_trading_env,
+          args.save_path,
+          initial_ckpt = init_ckpt,
           val_env = eval_env,
           test_env = test_env,
           steps_per_update=constants.N_STEPS_UPDATE,

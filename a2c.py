@@ -122,6 +122,8 @@ def entropy(mu, L):
 def learn(
     network,
     env,
+    ckpt_path,
+    initial_ckpt = None,
     val_env = None,
     test_env = None,
     steps_per_update=5,
@@ -141,9 +143,8 @@ def learn(
     alpha=0.99,
     gamma=0.99,
     log_interval=50,
-    ckpt_interval = 1e5,
+    ckpt_interval = 1e3,
     val_interval = 50,
-    load_path=None,
     MAR=None,
     **network_kwargs):
     
@@ -159,12 +160,14 @@ def learn(
         lr_func = Itd(init_lr, total_timesteps, decay_rate)
 
     model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon)
-    
-    if load_path is not None:
-        load_path = osp.expanduser(load_path)
-        ckpt = tf.train.Checkpoint(model = model)
-        manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep = None)
-        ckpt.restore(manager)
+
+    load_path = osp.expanduser(ckpt_path)
+    ckpt = tf.train.Checkpoint(model = model.model, optimizer = model.optimizer)
+    manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep = 10, keep_checkpoint_every_n_hours= 10 )
+    if initial_ckpt == 'latest':
+        ckpt.restore(manager.latest_checkpoint)
+    elif initial_ckpt is not None:
+        ckpt.restore(initial_ckpt)
     
     runner = Runner(env, model, steps_per_update, gamma)
     
@@ -172,7 +175,9 @@ def learn(
     t_start = time.time()
     
     n_updates = total_timesteps // (nenvs * steps_per_update)
-    fig, ax = plt.subplots()
+    xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
+    yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
+    fig, axs = plt.subplots(xplots, yplots)
     for update in range(1, n_updates + 1):
         
         obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
@@ -188,28 +193,30 @@ def learn(
             print(f'mean reward for minibatch {update}: {tf.reduce_mean(rewards):.3g}')
             #TODO: add logging method for tensorboard
         if update % ckpt_interval == 0:
-            print('Saving model not implemented yet!!')
-            #TODO implement model weight saving
-            raise SystemExit
-            network.save_weights()
+            manager.save()
         if update % val_interval == 0 and val_env is not None:
             obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
-            total_rewards = tf.reduce_sum(rewards) / val_env.num_envs
+            total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
             neglogpac, _ = neglogp(raw_actions, mus, Ls)
             advs = rewards - values
             pg_loss = model.action_loss(neglogpac, advs)
             value_loss = model.value_loss(values, rewards)
             entropy_loss = model.entropy_loss(mus, Ls)
-            print(f'at update {update}, validation trajectory average total rewards {total_rewards:.6f}. ')
+            print(f'at update {update}, validation trajectory average daily rewards {total_rewards:.6f}. ')
             print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}\n     entropy loss {entropy_loss:.3f}')
             closes = obs[3]
-            y_rew = tf.math.cumprod(rewards / 100 + 1.0)[:constants.VAL_STEPS]
-            x = range(rewards.shape[0])[:constants.VAL_STEPS]
-            ax.clear()
-            ax.plot(x, y_rew, 'r--')
-            for i in range(1,closes.shape[-1]):
-                ticker_price = closes[:constants.VAL_STEPS,i]
-                ax.plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
+            split_closes = tf.split(closes, num_or_size_splits = val_env.num_envs)
+            split_rewards = tf.split(rewards, num_or_size_splits = val_env.num_envs)
+            for n in range(val_env.num_envs):
+                ax_x = n % xplots
+                ax_y = n // yplots
+                y_rew = tf.math.cumprod(split_rewards[n] / 100 + 1.0)
+                x = range(split_rewards[n].shape[0])
+                axs[ax_x, ax_y].clear()
+                axs[ax_x, ax_y].plot(x, y_rew, 'r--')
+                for i in range(1,closes.shape[-1]):
+                    ticker_price = split_closes[n][...,i]
+                    axs[ax_x, ax_y].plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
             plt.show()
             plt.pause(0.1)
             

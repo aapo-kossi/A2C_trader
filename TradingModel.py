@@ -9,6 +9,9 @@ import constants
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Conv1D
+from tensorflow.keras.layers import MaxPool2D
+from tensorflow.keras.layers import Dropout
 from tensorflow.keras.activations import swish
 from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
 
@@ -16,6 +19,7 @@ from tensorflow_probability.python.distributions import MultivariateNormalTriL a
 #TODO: implement hparam optimization
 
         
+
 class Cholesky_from_z(tf.keras.layers.Layer):
     def __init__(self, output_shape):
         super(Cholesky_from_z, self).__init__(trainable = False)
@@ -127,7 +131,7 @@ class Trader(tf.keras.Model):
     inputs: 1st encoded categories, 2nd equity, 3rd stock data, 4th last prices, 5th current capital
     
     
-    TODO: HPARAM TUNING AND GRAPH EXECUTION
+    TODO: HPARAM TUNING
     
     """
     def __init__(self, output_shape):
@@ -181,7 +185,7 @@ class Trader(tf.keras.Model):
 
         #dense network for recognising temporal features, convolutional might be more effective
         y = self.normalizer((y, 2))
-        y = self.flatten_features_and_days(y)
+        # y = self.flatten_features_and_days(y)
         y = self.dense_temporal(y)
         # tf.debugging.assert_all_finite(y, 'temporal net output not finite')
         #concatenates the different inputs and categorizes features across all stocks
@@ -251,10 +255,18 @@ class Trader(tf.keras.Model):
     @staticmethod
     def make_temporal_DNN():
         model = tf.keras.Sequential(name = 'temporal_network')
-        model.add(Dense(64, activation = swish))
-        model.add(Dense(32, activation = swish))
-        model.add(Dense(16, activation = swish))
+        model.add(Conv1D(32, 5, activation = swish))
+        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        model.add(Conv1D(64, 5, activation = swish))
+        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        model.add(Conv1D(128, 5, activation = swish))
+        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
         model.add(tf.keras.layers.Flatten())
+        model.add(Dense(128, activation = swish))
+        # model.add(Dropout(0.3, seed=0))
+        model.add(Dense(100, activation = swish))
+        # model.add(Dropout(0.3, seed=1))
+        model.add(Dense(64, activation = swish))
         return model
     
     @staticmethod
@@ -326,19 +338,6 @@ class Trader(tf.keras.Model):
         
         model = tf.keras.Model(inputs = inputs, outputs = outputs, name = 'actor_fc_network')
         return model
-    
-    
-    def selling_more_than_available(self, raw_actions, lb):
-        """
-        DEPRECATED
-        
-        """
-        flag = tf.fill(raw_actions.shape[:-1], False)
-        for i in range(raw_actions.shape[0]):
-            for j in range(raw_actions.shape[1]):  
-                if raw_actions[i,j] < lb[i,j] and raw_actions[i,j] < 0:
-                    flag = tf.tensor_scatter_nd_update(flag, [[i]], [True])
-        return flag
     
     @staticmethod
     def cash_to_shares(args):

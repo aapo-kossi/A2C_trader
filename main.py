@@ -147,7 +147,7 @@ def zip_identifiers(dataset, arrs):
 def fetch_csvs(dataset, lens):
     def map_fn(l, filename):
         file_ds = tf.data.experimental.CsvDataset(filename, [tf.float32] * 7,
-                                                  exclude_cols=[0, 7], header=True) #TODO: investigate buffer size
+                                                  exclude_cols=[0, 7], header=True, buffer_size = 1048576) # buffer size 1 MB
         file_ds = file_ds.batch(batch_size = l, drop_remainder=True).map(lambda *features: tf.stack(features, -1))
         return file_ds
     len_ds = tf.data.Dataset.from_tensor_slices(lens)
@@ -171,7 +171,8 @@ def get_data_index(folderpath):
     return data_index
 
 def get_enddate(folderpath):
-    npz = np.load(f'{folderpath}/ccm3_raw_lens.npz', allow_pickle=True)
+    len_path = glob.glob(f'{folderpath}/*_metadata.npz')[0]
+    npz = np.load(len_path, allow_pickle=True)
     return npz['enddate']
         
 
@@ -188,7 +189,7 @@ def main():
 
     parser.add_argument('save_path', help = 'path to the folder used to save model weights as checkpoints', type = str)
     parser.add_argument('-d', '--input_dir', help = 'path to the dir including processed csv split into train, eval and test dirs', type=str)
-    parser.add_argument('-n', '--num_stocks', help = 'number of stocks the model is to have as an input', type=str)
+    parser.add_argument('-n', '--num_stocks', help = 'number of stocks the model is to have as an input', type=int)
     parser.add_argument('-c', '--checkpoint', help = 'specify a checkpoint file to load weights from, if unspecified, will initiate model from scratch', type = str)
     parser.add_argument('-l', '--use_latest', help = 'use latest checkpoint to continue training', action = 'store_true')
 

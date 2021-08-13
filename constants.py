@@ -49,9 +49,9 @@ T_MUL = 2.0
 M_MUL = 1.5
 LR_ALPHA = 1e-3
 EP_SHUFFLE_BUF = 256
-GVKEYS_TO_SKIP = {'train': [3226],
-                   'test': [],
-                   'eval': []}
+# GVKEYS_TO_SKIP = {'train': [3226, 2176],
+#                     'test': [3226],
+#                     'eval': [3226]}
 SPLIT_LABELS = ['train','eval','test']
 
 

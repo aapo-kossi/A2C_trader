@@ -70,7 +70,7 @@ class TradingEnv:
         return obs as a list of tensors:
             0: companies, sectors, industries onehot encoded
             1: current equity
-            2: historical ohlcvd data shaped (n_envs, n_tickers, n_days, n_features)
+            2: historical ohlcvd data shaped (n_envs, n_tickers, n_days, n_channels)
             3: last prices
             4: current capital
         """
@@ -87,8 +87,9 @@ class TradingEnv:
         # tf.print(tf.math.reduce_any(tf.math.is_nan(capital)))
         return [ tf.convert_to_tensor(ob, dtype=tf.float64) for ob in [onehots, equity, ohlcvd, lasts, capital]]
     
+    @tf.function
     def reset(self):
-        trues = tf.fill(self.num_envs, True)
+        trues = tf.fill([self.num_envs], True)
         self._reset(trues)
         return
     
@@ -226,7 +227,7 @@ class TradingEnv:
         mu = ohlcvd
         std = mu * ratio
         noisy = N(mu, scale_diag = std).sample()
-        noisy = tf.where(noisy == 0.0, 0.0, tf.clip_by_value(noisy, 5e-3, tf.float32.max))
+        noisy = tf.where(noisy == 0.0, 0.0, tf.clip_by_value(noisy, 5e-4, tf.float32.max))
 
         # print(noisy.shape)
         # for i in range(arr_size):

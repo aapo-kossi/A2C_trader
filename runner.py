@@ -95,8 +95,7 @@ class Runner:
         return mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L
     
 
-# TODO: somehow enable graph execution, issue being *s[2] iterating over a tensor
-# @tf.function(experimental_relax_shapes=True)
+@tf.function(experimental_relax_shapes=True)
 def sf01(tensors):
     """
     stack tensors, swap and then flatten axes 0 and 1
@@ -113,7 +112,7 @@ def sf01(tensors):
     else:
         tf.print('INVALID INPUT TENSOR FOR SF01 OP')
         perm = tf.constant([0])
-    return tf.reshape(tf.transpose(tensor, perm), (s[0] * s[1], *s[2:]))
+    return tf.reshape(tf.transpose(tensor, perm), (s[0] * s[1],) + tuple(tf.unstack(s[2:])))
 
 @tf.function(experimental_relax_shapes=True)
 def get_discounted_rewards(rewards, dones, gamma):

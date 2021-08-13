@@ -182,6 +182,8 @@ def learn(
         
         obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
         policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+        if update == 1:
+            model.model.summary()
         if n_corrupt > 0:
             print(f'{n_corrupt} action(s) corrupt, for which no gradients propagated')
         nseconds = time.time() - t_start
@@ -219,6 +221,7 @@ def learn(
                     axs[ax_x, ax_y].plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
             plt.show()
             plt.pause(0.1)
+            val_env.reset()
             
     return model
 

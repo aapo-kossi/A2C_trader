@@ -21,9 +21,11 @@ from runner import Runner
 #classes A2CModel and the learn function slightly modified from baselines A2C implementation
 #found at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
 class A2CModel:
-    def __init__(self, env, model, lr_func, value_c, ent_c, max_grad_norm, alpha, epsilon):
+    def __init__(self, env, model, lr_func, value_c, ent_c, max_grad_norm, alpha, epsilon, optimizer_init):
         self.model = model
         self.optimizer = tf.keras.optimizers.RMSprop(learning_rate = lr_func, rho = alpha, epsilon = epsilon)
+        if optimizer_init is not None:
+            self.optimizer.set_weights(optimizer_init)
         self.value_c = value_c
         self.ent_c = ent_c
         self.max_grad_norm = max_grad_norm
@@ -51,7 +53,7 @@ class A2CModel:
             vf_loss = self.value_loss(vpred, rewards)
             pg_loss = self.action_loss(neglogpac, advs)
             loss = pg_loss - entropy + vf_loss
-            
+        
         var_list = tape.watched_variables()
         grads = tape.gradient(loss, var_list)
         grads, norm = tf.clip_by_global_norm(grads, self.max_grad_norm)
@@ -122,30 +124,28 @@ def entropy(mu, L):
 def learn(
     network,
     env,
-    ckpt_path,
-    initial_ckpt = None,
+    # ckpt_path,
+    lr_func,
+    # initial_ckpt = None,
     val_env = None,
     test_env = None,
     steps_per_update=5,
     eval_steps = 100,
     test_steps = 100,
-    total_timesteps=int(80e6),
+    total_timesteps=int(80e7),
+    init_timestep = 0,
     vf_coef=0.5,
     ent_coef=0.01,
     max_grad_norm=0.5,
-    init_lr=7e-2,
-    decay_steps = 10000,
-    decay_rate = 1e+1,
-    t_mul = None,
-    m_mul = None,
-    lr_alpha = 0.0,
     epsilon=1e-5,
     alpha=0.99,
     gamma=0.99,
     log_interval=50,
-    ckpt_interval = 1e3,
-    val_interval = 50,
+    ckpt_interval = 1e4,
+    val_interval = 500,
     MAR=None,
+    optimizer_init = None,
+    metrics = {},
     **network_kwargs):
     
     nenvs = env.num_envs
@@ -153,21 +153,18 @@ def learn(
     
     
     #instantiating the A2c model object
-    #TODO: add actual network hparams
-    if t_mul is not None and m_mul is not None:    
-        lr_func = Cdr(init_lr, decay_steps, t_mul = t_mul, m_mul = m_mul, alpha = lr_alpha)
-    else:
-        lr_func = Itd(init_lr, total_timesteps, decay_rate)
 
-    model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon)
+    model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon, optimizer_init)
+ 
 
-    load_path = osp.expanduser(ckpt_path)
-    ckpt = tf.train.Checkpoint(model = model.model, optimizer = model.optimizer)
-    manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep = 10, keep_checkpoint_every_n_hours= 10 )
-    if initial_ckpt == 'latest':
-        ckpt.restore(manager.latest_checkpoint)
-    elif initial_ckpt is not None:
-        ckpt.restore(initial_ckpt)
+    
+    # load_path = osp.expanduser(ckpt_path)
+    # ckpt = tf.train.Checkpoint(model = model.model, optimizer = model.optimizer)
+    # manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep = 10, keep_checkpoint_every_n_hours= 10 )
+    # if initial_ckpt == 'latest':
+    #     ckpt.restore(manager.latest_checkpoint)
+    # elif initial_ckpt is not None:
+    #     ckpt.restore(initial_ckpt)
     
     runner = Runner(env, model, steps_per_update, gamma)
     
@@ -175,13 +172,24 @@ def learn(
     t_start = time.time()
     
     n_updates = total_timesteps // (nenvs * steps_per_update)
+    val_updates = val_interval // (nenvs * steps_per_update)
+    
     xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
     yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
     fig, axs = plt.subplots(xplots, yplots)
-    for update in range(1, n_updates + 1):
+    accumulated_reward = 0.0
+    for update in range(1 + init_timestep, init_timestep + n_updates + 1):
         
         obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
         policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+        
+
+        metrics['train_loss'](policy_loss + value_loss + entropy)
+        metrics['train_pg_loss'](policy_loss)
+        metrics['train_value_loss'](value_loss)
+        metrics['train_ent'](entropy)
+        metrics['train_rew'](rewards)
+        
         if update == 1:
             model.model.summary()
         if n_corrupt > 0:
@@ -189,21 +197,28 @@ def learn(
         nseconds = time.time() - t_start
         fps = int((update * nenvs * steps_per_update)/nseconds)
 
-        if update % log_interval == 0:
+        if  log_interval != 0 and update % log_interval == 0:
             print("current single env steps fps: {}".format(fps))
             print("     policy loss {:.3f},\n     critic loss {:.3f},\n entropy loss {:.3f}".format(policy_loss, value_loss, entropy))
             print(f'mean reward for minibatch {update}: {tf.reduce_mean(rewards):.3g}')
+            
             #TODO: add logging method for tensorboard
-        if update % ckpt_interval == 0:
-            manager.save()
-        if update % val_interval == 0 and val_env is not None:
-            obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True)
+        # if update % ckpt_interval == 0:
+        #     manager.save()
+        if val_updates != 0 and update % val_updates == 0 and val_env is not None:
+            obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True, bootstrap=False)
             total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
+            accumulated_reward += tf.reduce_sum(rewards)
             neglogpac, _ = neglogp(raw_actions, mus, Ls)
             advs = rewards - values
             pg_loss = model.action_loss(neglogpac, advs)
             value_loss = model.value_loss(values, rewards)
             entropy_loss = model.entropy_loss(mus, Ls)
+            metrics['eval_loss'](pg_loss + value_loss + entropy_loss)
+            metrics['eval_pg_loss'](pg_loss)
+            metrics['eval_value_loss'](value_loss)
+            metrics['eval_ent'](entropy_loss)
+            metrics['eval_rew'](rewards)
             print(f'at update {update}, validation trajectory average daily rewards {total_rewards:.6f}. ')
             print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}\n     entropy loss {entropy_loss:.3f}')
             closes = obs[3]
@@ -220,10 +235,10 @@ def learn(
                     ticker_price = split_closes[n][...,i]
                     axs[ax_x, ax_y].plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
             plt.show()
-            plt.pause(0.1)
+            plt.pause(0.5)
             val_env.reset()
             
-    return model
+    return model, accumulated_reward, model.optimizer.variables()
 
 
 

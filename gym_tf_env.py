@@ -20,10 +20,12 @@ class TradingEnv:
                  noise_ratio = 0.002,
                  vol_noise_intensity = 10,
                  cost_per_share = 0.0,
+                 cost_percentage = 0.0,
                  nec_penalty = 0.0,
                  nes_penalty = 0.0,
                  MAR = None,
-                 render = False):
+                 render = False,
+                 input_days = constants.INPUT_DAYS):
         
         self.init_capital = tf.cast(init_capital, tf.float64)
         self.window_data_index = tf.constant(data_index.to_numpy())
@@ -31,7 +33,7 @@ class TradingEnv:
         self.sector_cats = tf.constant(sector_cats)
         self.n_secs = self.sector_cats.shape[0]
         self.total_days = train_windows.element_spec[0].shape[0]
-        self.input_days = constants.INPUT_DAYS
+        self.input_days = input_days
         self.action_space = action_space
         self.noisy = noise_ratio > 0.0
         self.noise_ratio = noise_ratio
@@ -40,10 +42,11 @@ class TradingEnv:
         self.render = render
         self.pen_coef = tf.constant([nec_penalty, nes_penalty])
         self.cost_per_share = tf.constant(cost_per_share, dtype = tf.float64)
+        self.cost_percentage = cost_percentage
         
         self.num_envs = n_envs
         self.n_symbols = train_windows.element_spec[0].shape[1]
-        self.window = iter(train_windows.prefetch(n_envs))
+        self.window = iter(train_windows.prefetch(tf.data.AUTOTUNE))
 
         self.capital = tf.Variable(tf.ones((n_envs, 1), dtype=tf.float64) * init_capital)
         self.equity = tf.Variable(tf.zeros([n_envs, self.n_symbols], dtype = tf.float64))
@@ -133,9 +136,11 @@ class TradingEnv:
         e = self.equity
         tf.debugging.assert_non_negative(e + a, message = 'selling more than available')
 
-        n_traded = tf.math.reduce_sum(tf.math.abs(a), axis = 1)
-        commissions = self.cost_per_share * n_traded
-        commissions = tf.expand_dims(commissions, 1)
+        n_traded = tf.math.abs(a)
+        p_commission = n_traded * lasts * self.cost_percentage
+        vol_commission = n_traded * self.cost_per_share
+        commissions = tf.math.maximum(p_commission, vol_commission)
+        commissions = tf.math.reduce_sum(commissions, axis = 1, keepdims=True)
 
         self.capital.assign_add(tf.reduce_sum(- a * lasts + e * divs, axis = 1, keepdims=True) - commissions, read_value=False)
         self.equity.assign_add(a, read_value=False)

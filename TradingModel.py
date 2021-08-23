@@ -7,17 +7,32 @@ Created on Wed Oct 14 13:12:15 2020
 
 import constants
 import tensorflow as tf
+import keras_tuner as kt
 import tensorflow_probability as tfp
+from tensorflow.keras.layers import Lambda
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Conv1D
+from tensorflow.keras.layers import LSTM
 from tensorflow.keras.layers import MaxPool2D
-from tensorflow.keras.layers import Dropout
 from tensorflow.keras.activations import swish
 from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
 
 
-#TODO: implement hparam optimization
 
+        
+
+class deterministic_dropout(tf.keras.layers.Layer):
+    def __init__(self, p_drop, **kwargs):
+        super(deterministic_dropout, self).__init__(**kwargs)
+        self.log_p = tf.math.log([[p_drop, 1 - p_drop]])
+        
+    def call(self, inputs):
+        s = tf.shape(inputs)
+        seed1 = tf.cast(tf.math.floormod(tf.math.reduce_sum(inputs) * 10002563.0 + 12875167.0, 349963), tf.int32)
+        seed2 = tf.cast(tf.math.floormod(tf.math.reduce_max(inputs[:, -1]) * 15005 + 8371, 19993), tf.int32 )
+        log_p = tf.tile(self.log_p, (s[0],1))
+        mask = tf.random.stateless_categorical(log_p, s[1], [seed1, seed2]) == 1
+        return tf.where(mask, inputs, tf.zeros_like(inputs))
         
 
 class Cholesky_from_z(tf.keras.layers.Layer):
@@ -130,30 +145,29 @@ class Trader(tf.keras.Model):
     """
     inputs: 1st encoded categories, 2nd equity, 3rd stock data, 4th last prices, 5th current capital
     
-    
-    TODO: HPARAM TUNING
-    
     """
-    def __init__(self, output_shape):
+    def __init__(self, output_shape, hp):
+        """
+        inputs: 1, output shape of actor network, essentially n_stocks that is desirable to be traded
+                2, hyperparameters for the model, which impact the model architecture and size
+        """
         super(Trader, self).__init__()
-        
-        action_dim = output_shape
         
         #initializing the model layers
         self.arrange = Arranger()
-        self.normalizer = tf.keras.layers.Lambda(self.normalize_features)
-        self.flatten_features_and_days = tf.keras.layers.Lambda(lambda x: tf.reshape(x, [ x.shape[0] , x.shape[1] , -1 ]), trainable = False)
-        self.encoder = self.make_mlp()
-        self.dense_temporal = self.make_temporal_DNN()
-        self.price_scaler = tf.keras.layers.Lambda(lambda args: self.scale_prices(*args), trainable = False)
-        self.equity_scaler = tf.keras.layers.Lambda(lambda args: self.scale_equity(*args), trainable = False)
-        self.common = self.make_common_dense(action_dim)
-        self.cholesky_from_z = Cholesky_from_z(action_dim)
-        self.clip_z = tf.keras.layers.Lambda(self.clip_by_value_reverse_gradient)
-        self.actor = self.make_actor(action_dim, (self.cholesky_from_z, self.clip_z))
+        self.normalizer = Lambda(self.normalize_features)
+        self.flatten_features_and_days = Lambda(lambda x: tf.reshape(x, [ x.shape[0] , x.shape[1] , -1 ]), trainable = False)
+        self.encoder = self.make_mlp(hp)
+        self.dense_temporal = self.make_temporal_DNN(hp)
+        self.price_scaler = Lambda(lambda args: self.scale_prices(*args), trainable = False)
+        self.equity_scaler = Lambda(lambda args: self.scale_equity(*args), trainable = False)
+        self.common, common_out_shape = self.make_common_dense(output_shape, hp)
+        self.cholesky_from_z = Cholesky_from_z(output_shape)
+        self.clip_z = Lambda(self.clip_by_value_reverse_gradient)
+        self.actor = self.make_actor(common_out_shape, output_shape, (self.cholesky_from_z, self.clip_z), hp)
         self.critic = Dense(1, name = 'critic')
         self.buy_limiter = Buy_limiter()
-        self.convert_to_nshares = tf.keras.layers.Lambda(self.cash_to_shares)
+        self.convert_to_nshares = Lambda(self.cash_to_shares)
       
 
     def call(self, inputs, training=False, val_only = False, dist_features = False):
@@ -240,7 +254,7 @@ class Trader(tf.keras.Model):
 
         #reordering the actions back into the input order
         action = tf.gather(action, tf.argsort(orders), batch_dims = 1)
-        
+
         if training:
             return action, raw_action, value, neg_cash, neg_shares, final_mu, L
 
@@ -253,24 +267,58 @@ class Trader(tf.keras.Model):
     
     
     @staticmethod
-    def make_temporal_DNN():
+    def make_temporal_DNN(hp):
+        architecture = hp.Choice('temporal_nn_type', ['Conv1D', 'LSTM'], default = 'Conv1D')
         model = tf.keras.Sequential(name = 'temporal_network')
-        model.add(Conv1D(32, 5, activation = swish))
-        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        model.add(Conv1D(64, 5, activation = swish))
-        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        model.add(Conv1D(128, 5, activation = swish))
-        model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        model.add(tf.keras.layers.Flatten())
-        model.add(Dense(128, activation = swish))
-        # model.add(Dropout(0.3, seed=0))
-        model.add(Dense(100, activation = swish))
-        # model.add(Dropout(0.3, seed=1))
-        model.add(Dense(64, activation = swish))
+        input_len = hp.Int('input_days', min_value= 10, max_value = 255, step = 5)
+        if architecture == 'Conv1D':
+            max_kernel_size = input_len - 6
+            for n in range(hp.Int('conv_layers', min_value = 2, max_value = 6, default = 3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
+                filters = hp.Int(f'conv{n}_filters', min_value = 8, max_value = 256, sampling = 'log', default = 2**(n+5), parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
+                kernel_size = hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, sampling = 'log', default = 5, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
+                padding = hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'valid', parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
+                model.add(Conv1D(filters, kernel_size, padding=padding, activation = swish))
+                model.add(MaxPool2D(pool_size=(1,2),strides = (1,2)))
+                if padding == 'same':
+                    input_len = input_len
+                    new_max_kernel_size = max_kernel_size // 2
+                else:
+                    input_len = (input_len - kernel_size + 1) // 2
+                    new_max_kernel_size = input_len - 2
+                if new_max_kernel_size < 2: break
+                max_kernel_size = new_max_kernel_size
+            model.add(tf.keras.layers.Flatten())
+            for n in range(hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
+                model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 1024, step = 32, default = 256 / 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
+                # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), name = f'dropout{n}'))
+
+        else:
+            #transpose so that time dimension is first (after batch)
+            #flatten channels and stocks
+            model.add(Lambda(lambda x: tf.transpose(x, [0,2,1,3])))
+            model.add(Lambda(lambda x: tf.reshape(x, tuple(tf.unstack(tf.shape(x)[:-2])) + (-1,))))
+            for n in range(hp.Int('lstm_layers', min_value = 1, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['LSTM']) - 1):
+                units = hp.Int(f'lstm{n}_units', min_value = 256 // 4, max_value = 2048 // 4, step = 256 // 4, default = 512 // 4, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
+                model.add(LSTM(units, return_sequences = True, name = f'temporal_{n}'))
+            final_units = hp.Int('last_lstm_units', min_value = 256 // 4, max_value = 2048 // 4, step = 256 // 4, default = 512 // 4, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
+            model.add(LSTM(final_units, name = 'last_temporal'))
+
+        # model.add(Conv1D(32, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(Conv1D(64, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(Conv1D(128, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(tf.keras.layers.Flatten())
+        # model.add(Dense(128, activation = swish))
+        # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
+        # model.add(Dense(100, activation = swish))
+        # model.add(deterministic_dropout(hp.Choice('p_drop2', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
+        # model.add(Dense(64, activation = swish))
         return model
     
     @staticmethod
-    def make_mlp():
+    def make_mlp(hp):
         """
         Returns
         -------
@@ -279,8 +327,10 @@ class Trader(tf.keras.Model):
         """
         model = tf.keras.Sequential(name = 'autoencoder')
         model.add(tf.keras.layers.Flatten())
-        model.add(Dense(32, activation = swish, name = 'autoencoder_1' ))
-        model.add(Dense(16, activation = swish, name = 'autoencoder_2' ))
+        for n in range(hp.Int('mlp_layers', min_value = 1, max_value = 3, default = 2)):
+            units = hp.Int(f'mlp{n}_units', min_value = 10, max_value = 100, step = 10, default = 32 // 2**n)
+            model.add(Dense(units, activation = swish, name = f'autoencoder_{n}'))
+
         return model
     
     @staticmethod
@@ -292,43 +342,50 @@ class Trader(tf.keras.Model):
         return scaled_prices * equity
     
 
-    def make_common_dense(self, output_shape):
+    def make_common_dense(self, output_shape, hp):
         model = tf.keras.Sequential(name = 'common')
-        model.add(Dense(output_shape * 32, activation = swish, name = 'common1'))
-        model.add(Dense(output_shape * 16, activation = swish, name = 'common2'))
-        model.add(Dense(output_shape * 8, activation = swish, name = 'common3'))
-        return model
+        for n in range(hp.Int('common_layers', min_value = 1, max_value = 4, default = 3)):
+            units = hp.Int(f'common{n}_units', min_value = 1, max_value = 129, step = 4, default = 32 // 2**n)
+            model.add(Dense(output_shape * units, activation = swish, name = f'common{n}'))
+        return model, (output_shape * units,)
     
     @staticmethod
-    def make_actor(num_outputs, shapers):
-
+    def make_actor(input_shape, num_outputs, shapers, hp):
         def scale(unscaled, lb, ub):
             return unscaled * (ub - lb) - lb
+        
             
         gen_cholesky, clip_z = shapers
 
-        input_main = tf.keras.Input(shape = (num_outputs * 8,))
+        input_main = tf.keras.Input(shape = input_shape)
         lb, ub = (tf.keras.Input(shape = (num_outputs,)), tf.keras.Input(shape = (1,)))
         inputs = (input_main, lb, ub)
-        hidden = Dense(num_outputs * 8, activation = swish, name = 'actor_common1')(input_main)
-        hidden2 = Dense(num_outputs * 4, activation = swish, name = 'actor_hidden_mean')(hidden)
+        hidden_input = input_main
+        n_hidden_layers = hp.Int('n_actor_hidden_layers', min_value = 1, max_value = 4, default = 1)
+        for n_layer in range(n_hidden_layers):
+            latest_hidden = Dense(num_outputs * hp.Int(f'actor_hidden{n_layer}_units', min_value = 2, max_value = 16, step = 2, default = 8),
+                          activation = swish, name = f'actor_common{n_layer}')(hidden_input)
+            hidden_input = latest_hidden
+        mu_hidden = Dense(num_outputs * hp.Int('mu_hidden_units', min_value = 2, max_value = 16, step = 2, default = 4),
+                          activation = swish, name = 'mu_hidden')(latest_hidden)
 
         
         #get means bound near the observation space
-        buy_mu = Dense(num_outputs, activation = swish, name = 'mu_buys')(hidden2)
-        sell_mu = Dense(num_outputs, activation = swish, name = 'mu_sells')(hidden2)
-        unscaled_mu = tf.where(buy_mu  > sell_mu, buy_mu, - sell_mu) #choose bias based on absolute value of mean buy vs sell
+        buy_mu = Dense(num_outputs, activation = swish, name = 'mu_buys')(mu_hidden)
+        sell_mu = Dense(num_outputs, activation = swish, name = 'mu_sells')(mu_hidden)
+        unscaled_mu = tf.where(buy_mu  > sell_mu, buy_mu, - sell_mu) #choose bias based on absolute value of buy vs sell
         # unscaled_mu = buy_mu - sell_mu
         # unscaled_mu = unscaled_mu + constants.MIN_SWISH #min(swish(x)) = -0.278464..., we need output >= 0
         mu = unscaled_mu * (ub - lb)
         
         #generate lower triangle scale matrix
-        z_vec = Dense(num_outputs*(num_outputs - 1) / 2, activation = 'tanh', name = 'z_layer')(hidden)
+        z_vec = Dense(num_outputs*(num_outputs - 1) / 2, activation = 'tanh', name = 'z_layer')(latest_hidden)
         z_vec_clipped = clip_z(z_vec)
-        std_vec = Dense(num_outputs, activation = swish, name = 'stdev_layer')(hidden)
+        std_vec = Dense(num_outputs, activation = swish, name = 'stdev_layer')(latest_hidden)
         # std_vec = std_vec + constants.MIN_SWISH # diagonal part has to be positive
         #clip std between 0 and range of possible actions * l_scale_hparam
-        std_vec = tfp.math.clip_by_value_preserve_gradient(std_vec, 0.0, 1.0) * (ub - lb) * constants.l_scale
+        l_scale = hp.Float('std_scale', min_value = 0.1, max_value = 5., sampling = 'log', default = constants.l_scale)
+        std_vec = tfp.math.clip_by_value_preserve_gradient(std_vec, 0.0, 1.0) * (ub - lb) * l_scale
         
         # shape the vectors into a lower triangular matrix
         L = gen_cholesky(z_vec_clipped)
@@ -372,6 +429,16 @@ class Trader(tf.keras.Model):
         means = tf.reduce_mean(inputs, axis, keepdims=True)
         stdevs = tf.math.reduce_std(inputs, axis, keepdims=True)
         return tf.math.divide_no_nan((inputs - means), stdevs)
+    
+class HyperTrader(kt.HyperModel):
+    def __init__(self, out_shape):
+        super(HyperTrader, self).__init__()
+        self.out_shape = out_shape
+    
+    def build(self, hp):
+        model = Trader(self.out_shape, hp)
+        return model
+
         
     
     

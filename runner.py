@@ -27,7 +27,7 @@ class Runner:
         self.action_space = (env.num_envs, ) + env.action_space
         
         
-    def run(self, until_done = False):
+    def run(self, until_done = False, bootstrap = True):
         mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
         
         def single_step():
@@ -84,8 +84,8 @@ class Runner:
             app = tf.fill(mb_dones[0].shape, False)
             bstrap_dones = mb_dones.copy()
             bstrap_dones.append(app)
-            rewards_not_done = get_discounted_rewards(bstrap_rewards, bstrap_dones, self.gamma)[:-1]
             rewards_done = get_discounted_rewards(mb_rewards, mb_dones, self.gamma)
+            rewards_not_done = get_discounted_rewards(bstrap_rewards, bstrap_dones, self.gamma)[:-1]
             mb_rewards = tf.where(done_in_end, rewards_done, rewards_not_done)
             
         mb_rewards = tf.transpose(tf.stack(mb_rewards), (1,0))
@@ -95,7 +95,7 @@ class Runner:
         return mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L
     
 
-@tf.function(experimental_relax_shapes=True)
+# @tf.function(experimental_relax_shapes=True)
 def sf01(tensors):
     """
     stack tensors, swap and then flatten axes 0 and 1

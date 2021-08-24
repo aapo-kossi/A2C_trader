@@ -284,24 +284,24 @@ def main():
     eval_ds = prepare_ds(eval_ds, eval_arrs)
     test_ds = prepare_ds(test_ds, test_arrs)    
     
-    tuner.search((train_ds, eval_ds, test_ds))
+    # tuner.search((train_ds, eval_ds, test_ds))
     
-    best_hparams = tuner.get_best_hyperparameters()
-    print(best_hparams)
+    # best_hparams = tuner.get_best_hyperparameters()
+    # print(best_hparams)
     
     # train_ds = prepare_ds(train_ds, train_arrs, training=True)
-    # train_ds = finish_ds(train_ds, train_arrs, training = True,
-    #                       n_envs = constants.N_ENVS)
+    train_ds = finish_ds(train_ds, train_arrs, training = True,
+                          n_envs = constants.N_ENVS)
     
     # eval_ds = prepare_ds(eval_ds, eval_arrs, seed = 0)
-    # eval_ds = finish_ds(eval_ds, eval_arrs,
-    #                     window_l = constants.INPUT_DAYS + constants.VAL_STEPS,
-    #                     n_envs = constants.N_VAL_ENVS, seed = 0)
+    eval_ds = finish_ds(eval_ds, eval_arrs,
+                        window_l = constants.INPUT_DAYS + constants.VAL_STEPS,
+                        n_envs = constants.N_VAL_ENVS, seed = 0)
     
     # test_ds = prepare_ds(test_ds, test_arrs, seed = 1)
-    # test_ds = finish_ds(test_ds, test_arrs,
-    #                     window_l = constants.INPUT_DAYS + constants.TEST_STEPS,
-    #                     n_envs = constants.N_TEST_ENVS, seed = 1)
+    test_ds = finish_ds(test_ds, test_arrs,
+                        window_l = constants.INPUT_DAYS + constants.TEST_STEPS,
+                        n_envs = constants.N_TEST_ENVS, seed = 1)
 
 
     # start = time.time()

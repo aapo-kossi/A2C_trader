@@ -24,6 +24,7 @@ from matplotlib import pyplot as plt
 from gym_tf_env import TradingEnv
 from a2c import learn
 from tuner import MyTuner
+from tfrecords import write_record
 import TradingModel
 import constants
 
@@ -292,16 +293,20 @@ def main():
     # train_ds = prepare_ds(train_ds, train_arrs, training=True)
     train_ds = finish_ds(train_ds, train_arrs, training = True,
                           n_envs = constants.N_ENVS)
+    write_record(train_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/train')
+    
     
     # eval_ds = prepare_ds(eval_ds, eval_arrs, seed = 0)
     eval_ds = finish_ds(eval_ds, eval_arrs,
                         window_l = constants.INPUT_DAYS + constants.VAL_STEPS,
                         n_envs = constants.N_VAL_ENVS, seed = 0)
+    write_record(eval_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/eval')
     
     # test_ds = prepare_ds(test_ds, test_arrs, seed = 1)
     test_ds = finish_ds(test_ds, test_arrs,
                         window_l = constants.INPUT_DAYS + constants.TEST_STEPS,
                         n_envs = constants.N_TEST_ENVS, seed = 1)
+    write_record(test_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/test')
 
 
     # start = time.time()

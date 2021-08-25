@@ -36,26 +36,33 @@ def write_record(ds, path, shards = 10, elems_per_record = 16384):
         print("dataset saved successfully")
     
     
-def read_record(path):
-    def parse_bytes(bytes_elem):
-        return tf.io.parse_example(bytes_elem, {
+def read_record(path, batch_size = 64):
+    
+    feature_desc = {
             'feature_0': tf.io.FixedLenFeature((), tf.string),
             'feature_1': tf.io.FixedLenFeature((), tf.string),
-            'feature_2': tf.io.FixedLenFeature((), tf.string)})
+            'feature_2': tf.io.FixedLenFeature((), tf.string)
+            }
+    
+    def parse_bytes(bytes_elem):
+        return tf.io.parse_example(bytes_elem, feature_desc)
         
     def parse_features(examples):
-        for feature in examples:
-            examples[feature] = tf.io.parse_tensor(examples[feature], tf.float32, )
-        pass
+        def map_func(x): tf.io.parse_tensor(x, tf.float32)
+        elem = tuple(examples.values())
+        elem = tuple(map(map_func, elem))
+        #tf.ensure_shape(elem[0], ...)
+        #tf.ensure...
+        #...
+        return elem
     
     pattern = f'{path}/*.tfrecord'
     files = glob.glob(pattern)
     num_shards = len(files)
     ds = tf.data.TFRecordDataset(pattern, num_parallel_reads = num_shards)
-    ds = ds.batch(64).map(parse_bytes)
-    ds = ds.map()
-        
-    ds = 0
+    ds = ds.batch(batch_size).map(parse_bytes, num_parallel_calls = tf.data.AUTOTUNE)
+    ds = ds.map(parse_features, num_parallel_calls = tf.data.AUTOTUNE)
+    ds = ds.unbatch()   
     return ds
 
 

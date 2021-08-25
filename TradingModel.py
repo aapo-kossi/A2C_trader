@@ -270,7 +270,7 @@ class Trader(tf.keras.Model):
     def make_temporal_DNN(hp):
         architecture = hp.Choice('temporal_nn_type', ['Conv1D', 'LSTM'], default = 'Conv1D')
         model = tf.keras.Sequential(name = 'temporal_network')
-        input_len = hp.Int('input_days', min_value= 10, max_value = 255, step = 5)
+        input_len = hp.Int('input_days', min_value= 10, max_value = 100, step = 5)
         if architecture == 'Conv1D':
             max_kernel_size = input_len - 6
             for n in range(hp.Int('conv_layers', min_value = 2, max_value = 6, default = 3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):

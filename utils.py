@@ -119,3 +119,6 @@ def finish_ds(ds, arrs, training = False, window_l = constants.WINDOW_LENGTH, n_
         ds = ds.shuffle(constants.EP_SHUFFLE_BUF)
         # ds = ds.take(8192).cache().repeat().shuffle(8192)
     return ds
+
+def bytes_feature(value):
+  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))

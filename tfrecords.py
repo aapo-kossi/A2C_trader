@@ -6,13 +6,13 @@ Created on Tue Aug 24 22:17:59 2021
 """
 
 import tensorflow as tf
-from object_detection.utils import dataset_util
+import utils
 import glob
 
 def write_record(ds, path, shards = 10, elems_per_record = 16384):
     def serialize(*data):
         feature = {
-            f'feature_{i}' : dataset_util.bytes_list_feature([tf.io.serialize_tensor(data[i]).numpy()]) \
+            f'feature_{i}' : utils.bytes_list_feature([tf.io.serialize_tensor(data[i]).numpy()]) \
             for i in range(len(data))
             }
         proto = tf.train.Example(features = tf.train.Features(feature = feature))

@@ -18,7 +18,7 @@ import argparse
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.keras.backend.set_floatx('float64')
-tf.random.set_seed(918274)
+tf.random.set_seed(918278)
 
 from matplotlib import pyplot as plt
 from gym_tf_env import TradingEnv
@@ -55,13 +55,13 @@ def vis(state):
                         label = state.conames[i,j].numpy(),
                         color = color)
             ax.legend()
-            plt.pause(2)
+            plt.pause(1)
             ax.cla()
             state.reset()
 
 
 def get_data_index(folderpath):
-    filepath = f'{folderpath}/train/*.csv'
+    filepath = f'{folderpath}/test/*.csv'
     first = next(glob.iglob(filepath))
     with open(first, 'r') as file:
         input_csv = csv.reader(file)
@@ -94,28 +94,27 @@ def setup_metrics():
     test_val_loss_metric = tf.keras.metrics.Mean('test_value_loss', dtype = tf.float64)
     test_ent_metric = tf.keras.metrics.Mean('test_ent', dtype = tf.float64)
     test_reward_metric = tf.keras.metrics.Mean('test_reward', dtype = tf.float64)
-    metrics = {'train_rew': train_reward_metric,
+    train_metrics = {'train_rew': train_reward_metric,
                'train_ent': train_ent_metric,
                'train_value_loss': train_val_loss_metric,
                'train_pg_loss': train_pg_loss_metric,
-               'train_loss': train_loss_metric,
-               'eval_rew': eval_reward_metric,
+               'train_loss': train_loss_metric,}
+    eval_metrics = {'eval_rew': eval_reward_metric,
                'eval_ent': eval_ent_metric,
                'eval_value_loss': eval_val_loss_metric,
                'eval_pg_loss': eval_pg_loss_metric,
-               'eval_loss': eval_loss_metric,
-               'test_rew': test_reward_metric,
+               'eval_loss': eval_loss_metric,}
+    test_metrics = {'test_rew': test_reward_metric,
                'test_ent': test_ent_metric,
                'test_value_loss': test_val_loss_metric,
                'test_pg_loss': test_pg_loss_metric,
                'test_loss': test_loss_metric,}
-    return metrics
+    return train_metrics, eval_metrics, test_metrics
 
 
 def main():
     
     print('started')
-    plt.ion()
 
     parser = argparse.ArgumentParser(description='Train a neural network to trade n stocks concurrently, '\
                                                  'provided a .csv file of stock data.')
@@ -143,15 +142,25 @@ def main():
     train_arrs, eval_arrs, test_arrs = load_ids(parentdir)
     sec_cats = get_cats(train_arrs['sector_list'])
     train_ds, eval_ds, test_ds = load_datasets(parentdir)
-    # train_ds = read_record(f'{parentdir}/train')
-    # eval_ds = read_record(f'{parentdir}/eval')
-    # test_ds = read_record(f'{parentdir}/test')
+    # shapes = ((constants.WINDOW_LENGTH, constants.others['n_stocks'], constants.others['data_index'].size),(constants.others['n_stocks'],),(constants.others['n_stocks'],))
+    # train_ds = read_record(f'{parentdir}/train', shapes, batch_size = 512).repeat().shuffle(1024)
+    train_ds = tf.data.experimental.load('C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train').repeat().shuffle(1024)
     
     # train_ds = prepare_ds(train_ds, train_arrs, training=True)
     # train_ds = finish_ds(train_ds, train_arrs, training = True,
     #                       n_envs = constants.N_ENVS)
-    # write_record(train_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/train')
     
+    shard = tf.Variable(initial_value = -1, dtype = tf.int64)
+    def shard_func(*_):
+        if shard == 10:
+            return shard.assign(0)
+        else:
+            return tf.convert_to_tensor(shard.assign_add(1), dtype=tf.int64)
+        
+        
+    # tf.data.experimental.save(train_ds.take(16 * 16384), 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train',
+    #                           shard_func = shard_func)
+    # write_record(train_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train')
     
     eval_ds = prepare_ds(eval_ds, eval_arrs, seed = 0)
     eval_ds = finish_ds(eval_ds, eval_arrs,
@@ -165,23 +174,36 @@ def main():
                         n_envs = constants.N_TEST_ENVS, seed = 1)
     # write_record(test_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/test')
 
-    mock_env = TradingEnv(eval_ds,
-                   constants.others['data_index'],
-                   sec_cats,
-                   tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
-                   noise_ratio = 0.0)
+    # start = time.time()
+    # for n, elem in enumerate(train_ds):
+    #     if time.time() - start > 60: break
+    #     taken = time.time() - start
+    #     print(f'current fps: {n / taken}', end = '\r')
+    #     # tf.print(elem, summarize = -1)
+    #     # break
+    # print('')
+    # print(f'elements fetched in a minute: {n}')
+    # raise SystemExit
+
+    # mock_env = TradingEnv(test_ds,
+    #                 constants.others['data_index'],
+    #                 sec_cats,
+    #                 tf.constant((constants.others['n_stocks'],), dtype = tf.int32),
+    #                 noise_ratio = 0.0)
      
-    vis(mock_env)
+    # vis(mock_env)
     
-    metrics = setup_metrics()
+    train_metrics, eval_metrics, test_metrics = setup_metrics()
+    metrics = (train_metrics, eval_metrics, test_metrics)
     
     hypermodel = TradingModel.HyperTrader(out_shape = constants.others['n_stocks'])
     
     hp = kt.HyperParameters()
-    hp.Fixed('temporal_nn_type', value = 'LSTM')
-    hp.Fixed('max_steps_env', value = 32)
-    hp.Fixed('n_steps_update', value = 12)
-    hp.Fixed('n_batch', value = 16)
+    hp.Fixed('temporal_nn_type', 'Conv1D')
+    hp.Fixed('cost_per_share', constants.COST_PER_SHARE)
+    hp.Fixed('cost_p', constants.MIN_P_COST)
+    hp.Fixed('cost_minimum', constants.MIN_COST)
+    
     oracle = kt.oracles.Hyperband(kt.Objective('fitness','max'), max_epochs = 50, hyperparameters = hp)
     
         
@@ -198,16 +220,7 @@ def main():
     
 
 
-    # start = time.time()
-    # while time.time() - start < 900:
-    #     for n, elem in enumerate(train_ds):
-    #         print(n)
-    #         taken = time.time() - start
-    #         print(f'current fps: {n / taken}')
-    #         # tf.print(elem, summarize = -1)
-    #     # break
-    # print(f'elements fetched in 15 minutes: {n}')
-    # raise SystemExit
+
 
     # visualized train_windows of stock performances
 

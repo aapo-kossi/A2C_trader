@@ -5,6 +5,7 @@ Created on Sun Dec  6 21:53:48 2020
 @author: Aapo Kössi
 """
 import time
+import io
 import os.path as osp
 import constants
 
@@ -119,6 +120,17 @@ def entropy(mu, L):
     # print(ent)
     tf.debugging.assert_all_finite(ent, 'the hell??')
     return ent
+
+def write_plot(fig, writer, step):
+    buf = io.BytesIO()
+    fig.savefig(buf, format = 'png', dpi = 200)
+    plt.close(fig)
+    buf.seek(0)
+    image = tf.image.decode_png(buf.getvalue(), channels = 4)
+    image = tf.expand_dims(image, 0)
+    with writer.as_default():
+        tf.summary.image("Validation Trajectories", image, step=step)
+    return image
   
    
 def learn(
@@ -133,7 +145,7 @@ def learn(
     eval_steps = 100,
     test_steps = 100,
     total_timesteps=int(80e7),
-    init_timestep = 0,
+    init_step = 1,
     vf_coef=0.5,
     ent_coef=0.01,
     max_grad_norm=0.5,
@@ -142,15 +154,16 @@ def learn(
     gamma=0.99,
     log_interval=50,
     ckpt_interval = 1e4,
-    val_interval = 500,
+    val_iterations = 1,
     MAR=None,
     optimizer_init = None,
-    metrics = {},
+    metrics = ({},{},{}),
+    writer = None,
+    verbose = False,
     **network_kwargs):
     
     nenvs = env.num_envs
-   
-    
+    train_metrics, eval_metrics, test_metrics = metrics
     
     #instantiating the A2c model object
 
@@ -169,26 +182,69 @@ def learn(
     runner = Runner(env, model, steps_per_update, gamma)
     
     val_runner = Runner(val_env, model, eval_steps, 0.0)
+    
+    
+    def validate(update):
+        xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
+        yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
+        fig, axs = plt.subplots(xplots, yplots)
+        obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True, bootstrap=False)
+        total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
+        neglogpac, _ = neglogp(raw_actions, mus, Ls)
+        advs = rewards - values
+        pg_loss = model.action_loss(neglogpac, advs)
+        value_loss = model.value_loss(values, rewards)
+        entropy_loss = model.entropy_loss(mus, Ls)
+        eval_metrics['eval_loss'].update_state(pg_loss + value_loss + entropy_loss)
+        eval_metrics['eval_pg_loss'].update_state(pg_loss)
+        eval_metrics['eval_value_loss'].update_state(value_loss)
+        eval_metrics['eval_ent'].update_state(entropy_loss)
+        eval_metrics['eval_rew'].update_state(rewards)
+        closes = obs[3]
+        split_closes = tf.split(closes, num_or_size_splits = val_env.num_envs)
+        split_rewards = tf.split(rewards, num_or_size_splits = val_env.num_envs)
+        for n in range(val_env.num_envs):
+            ax_x = n % xplots
+            ax_y = n // yplots
+            y_rew = tf.math.cumprod(split_rewards[n] / 100 + 1.0)
+            x = range(split_rewards[n].shape[0])
+            axs[ax_x, ax_y].clear()
+            axs[ax_x, ax_y].plot(x, y_rew, 'r--')
+            for i in range(1,closes.shape[-1]):
+                ticker_price = split_closes[n][...,i]
+                axs[ax_x, ax_y].plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
+        if writer is not None:
+            write_plot(fig, writer, update)
+            with writer.as_default():
+                [tf.summary.scalar(x, eval_metrics[x].result(), step = update) for x in eval_metrics]
+            [eval_metrics[x].reset_states() for x in eval_metrics]
+        else:
+            plt.pause(0.3)
+            print(f'at update {update}, validation trajectory average daily rewards {total_rewards:.6f}. ')
+            print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}\n     entropy loss {entropy_loss:.3f}')
+        val_env.reset()
+        return tf.reduce_sum(rewards)
+    
+    
     t_start = time.time()
     
     n_updates = total_timesteps // (nenvs * steps_per_update)
-    val_updates = val_interval // (nenvs * steps_per_update)
-    
-    xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
-    yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
-    fig, axs = plt.subplots(xplots, yplots)
+    if val_iterations > 0:
+        val_updates = n_updates // val_iterations
+    else: val_updates = 0
+
     accumulated_reward = 0.0
-    for update in range(1 + init_timestep, init_timestep + n_updates + 1):
+    for update in range(init_step, init_step + n_updates):
         
         obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
         policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
         
 
-        metrics['train_loss'](policy_loss + value_loss + entropy)
-        metrics['train_pg_loss'](policy_loss)
-        metrics['train_value_loss'](value_loss)
-        metrics['train_ent'](entropy)
-        metrics['train_rew'](rewards)
+        train_metrics['train_loss'].update_state(policy_loss + value_loss + entropy)
+        train_metrics['train_pg_loss'].update_state(policy_loss)
+        train_metrics['train_value_loss'].update_state(value_loss)
+        train_metrics['train_ent'].update_state(entropy)
+        train_metrics['train_rew'].update_state(rewards)
         
         if update == 1:
             model.model.summary()
@@ -198,47 +254,21 @@ def learn(
         fps = int((update * nenvs * steps_per_update)/nseconds)
 
         if  log_interval != 0 and update % log_interval == 0:
-            print("current single env steps fps: {}".format(fps))
-            print("     policy loss {:.3f},\n     critic loss {:.3f},\n entropy loss {:.3f}".format(policy_loss, value_loss, entropy))
-            print(f'mean reward for minibatch {update}: {tf.reduce_mean(rewards):.3g}')
+            if verbose:
+                print("current single env steps fps: {}".format(fps))
+                print("     policy loss {:.3f},\n     critic loss {:.3f},\n entropy loss {:.3f}".format(policy_loss, value_loss, entropy))
+                print(f'mean reward for minibatch {update}: {tf.reduce_mean(rewards):.3g}')
+            if writer is not None:
+                with writer.as_default():
+                    [tf.summary.scalar(x, train_metrics[x].result(), step = update) for x in train_metrics]
+                [train_metrics[x].reset_state() for x in train_metrics]
             
-            #TODO: add logging method for tensorboard
-        # if update % ckpt_interval == 0:
-        #     manager.save()
         if val_updates != 0 and update % val_updates == 0 and val_env is not None:
-            obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True, bootstrap=False)
-            total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
-            accumulated_reward += tf.reduce_sum(rewards)
-            neglogpac, _ = neglogp(raw_actions, mus, Ls)
-            advs = rewards - values
-            pg_loss = model.action_loss(neglogpac, advs)
-            value_loss = model.value_loss(values, rewards)
-            entropy_loss = model.entropy_loss(mus, Ls)
-            metrics['eval_loss'](pg_loss + value_loss + entropy_loss)
-            metrics['eval_pg_loss'](pg_loss)
-            metrics['eval_value_loss'](value_loss)
-            metrics['eval_ent'](entropy_loss)
-            metrics['eval_rew'](rewards)
-            print(f'at update {update}, validation trajectory average daily rewards {total_rewards:.6f}. ')
-            print(f'validation losses:\n     value loss {value_loss:.3f}\n     policy loss {pg_loss:.3f}\n     entropy loss {entropy_loss:.3f}')
-            closes = obs[3]
-            split_closes = tf.split(closes, num_or_size_splits = val_env.num_envs)
-            split_rewards = tf.split(rewards, num_or_size_splits = val_env.num_envs)
-            for n in range(val_env.num_envs):
-                ax_x = n % xplots
-                ax_y = n // yplots
-                y_rew = tf.math.cumprod(split_rewards[n] / 100 + 1.0)
-                x = range(split_rewards[n].shape[0])
-                axs[ax_x, ax_y].clear()
-                axs[ax_x, ax_y].plot(x, y_rew, 'r--')
-                for i in range(1,closes.shape[-1]):
-                    ticker_price = split_closes[n][...,i]
-                    axs[ax_x, ax_y].plot(x, ticker_price / ticker_price[0], linewidth = 1, alpha = 0.5)
-            plt.show()
-            plt.pause(0.5)
-            val_env.reset()
-            
+            accumulated_reward += validate(update)
+                        
     return model, accumulated_reward, model.optimizer.variables()
+
+
 
 
 

@@ -21,6 +21,7 @@ class TradingEnv:
                  vol_noise_intensity = 10,
                  cost_per_share = 0.0,
                  cost_percentage = 0.0,
+                 cost_minimum = 0.0,
                  nec_penalty = 0.0,
                  nes_penalty = 0.0,
                  MAR = None,
@@ -43,6 +44,7 @@ class TradingEnv:
         self.pen_coef = tf.constant([nec_penalty, nes_penalty])
         self.cost_per_share = tf.constant(cost_per_share, dtype = tf.float64)
         self.cost_percentage = cost_percentage
+        self.cost_minimum = cost_minimum
         
         self.num_envs = n_envs
         self.n_symbols = train_windows.element_spec[0].shape[1]
@@ -65,7 +67,7 @@ class TradingEnv:
         self.dates = tf.Variable(initial_value = init_dates)
         self.reset()
         self.obs_shape = [x.shape for x in self.current_time_step()]
-        print('initialized environment')
+        # print('initialized environment')
     
     
     def current_time_step(self):
@@ -136,11 +138,7 @@ class TradingEnv:
         e = self.equity
         tf.debugging.assert_non_negative(e + a, message = 'selling more than available')
 
-        n_traded = tf.math.abs(a)
-        p_commission = n_traded * lasts * self.cost_percentage
-        vol_commission = n_traded * self.cost_per_share
-        commissions = tf.math.maximum(p_commission, vol_commission)
-        commissions = tf.math.reduce_sum(commissions, axis = 1, keepdims=True)
+        commissions = self.get_commission(lasts, action)
 
         self.capital.assign_add(tf.reduce_sum(- a * lasts + e * divs, axis = 1, keepdims=True) - commissions, read_value=False)
         self.equity.assign_add(a, read_value=False)
@@ -185,6 +183,16 @@ class TradingEnv:
     #         self.day.assign_add(tf.where(get_cond(),1,0))
     #     return
         
+    def get_commission(self, last, action):
+        n_traded = tf.math.abs(action)
+        traded = action != 0.0
+        min_commission = tf.cast(traded, tf.float64) * self.cost_minimum
+        p_commission = n_traded * last * self.cost_percentage
+        vol_commission = n_traded * self.cost_per_share
+        commission = tf.math.minimum(p_commission, vol_commission)
+        commission = tf.math.maximum(commission, min_commission)
+        commission = tf.math.reduce_sum(commission, axis = 1, keepdims=True)
+        return commission
     
     def get_mkt_val(self):
         return tf.squeeze(self.capital + tf.reduce_sum(tf.cast(self.equity, tf.float64) * self.get_lasts(), axis = 1, keepdims=True), axis = -1)

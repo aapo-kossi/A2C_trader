@@ -22,17 +22,19 @@ from tensorflow_probability.python.distributions import MultivariateNormalTriL a
         
 
 class deterministic_dropout(tf.keras.layers.Layer):
-    def __init__(self, p_drop, **kwargs):
+    def __init__(self, p_drop, hp, **kwargs):
         super(deterministic_dropout, self).__init__(**kwargs)
-        self.log_p = tf.math.log([[p_drop, 1 - p_drop]])
+        self.p = p_drop
+
         
     def call(self, inputs):
-        s = tf.shape(inputs)
-        seed1 = tf.cast(tf.math.floormod(tf.math.reduce_sum(inputs) * 10002563.0 + 12875167.0, 349963), tf.int32)
-        seed2 = tf.cast(tf.math.floormod(tf.math.reduce_max(inputs[:, -1]) * 15005 + 8371, 19993), tf.int32 )
-        log_p = tf.tile(self.log_p, (s[0],1))
-        mask = tf.random.stateless_categorical(log_p, s[1], [seed1, seed2]) == 1
-        return tf.where(mask, inputs, tf.zeros_like(inputs))
+        def map_fn(elems):
+            inputs, seed = elems
+            return tf.nn.experimental.stateless_dropout(inputs, self.p, seed)
+        seed1 = tf.cast(tf.math.floormod(tf.math.reduce_sum(inputs, axis = -1) * 10002563.0 + 12875167.0, 349963), tf.int32)
+        seed2 = tf.cast(tf.math.floormod(tf.math.reduce_max(inputs, axis = -1) * 15005.0 + 8371.0, 11351.0), tf.int32 )
+        out = tf.map_fn(map_fn, (inputs, [seed1, seed2]), parallel_iterations = 128, fn_output_signature = tf.float64)
+        return out
         
 
 class Cholesky_from_z(tf.keras.layers.Layer):
@@ -270,27 +272,28 @@ class Trader(tf.keras.Model):
     def make_temporal_DNN(hp):
         architecture = hp.Choice('temporal_nn_type', ['Conv1D', 'LSTM'], default = 'Conv1D')
         model = tf.keras.Sequential(name = 'temporal_network')
-        input_len = hp.Int('input_days', min_value= 10, max_value = 100, step = 5)
+        input_len = hp.Int('input_days', min_value= 10, max_value = 120, step = 10, default = 80)
         if architecture == 'Conv1D':
-            max_kernel_size = input_len - 6
+            max_kernel_size = min(input_len - 6, 20)
             for n in range(hp.Int('conv_layers', min_value = 2, max_value = 6, default = 3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
                 filters = hp.Int(f'conv{n}_filters', min_value = 8, max_value = 256, sampling = 'log', default = 2**(n+5), parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
-                kernel_size = hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, sampling = 'log', default = 5, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
-                padding = hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'valid', parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
+                kernel_size = hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, sampling = 'linear', default = 9 - n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
+                padding = hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'same', parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])
                 model.add(Conv1D(filters, kernel_size, padding=padding, activation = swish))
                 model.add(MaxPool2D(pool_size=(1,2),strides = (1,2)))
                 if padding == 'same':
-                    input_len = input_len
-                    new_max_kernel_size = max_kernel_size // 2
+                    input_len = input_len // 2
                 else:
                     input_len = (input_len - kernel_size + 1) // 2
-                    new_max_kernel_size = input_len - 2
-                if new_max_kernel_size < 2: break
+                new_max_kernel_size = input_len - 5
+                # print(f'new input length: {input_len}')
+                # print(f'new max kernel size: {new_max_kernel_size}')
+                if new_max_kernel_size < 9 - n: break
                 max_kernel_size = new_max_kernel_size
             model.add(tf.keras.layers.Flatten())
             for n in range(hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
                 model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 1024, step = 32, default = 256 / 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
-                # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), name = f'dropout{n}'))
+                model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
 
         else:
             #transpose so that time dimension is first (after batch)

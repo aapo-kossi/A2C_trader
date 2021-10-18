@@ -21,55 +21,69 @@ class Runner:
         self.model = model
         self.nsteps = nsteps
         self.gamma = gamma
-        self.obs = env.current_time_step()
-        [tf.debugging.assert_all_finite(x, 'non finite first obs') for x in self.obs]
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
         
-        
+    @tf.function
     def run(self, until_done = False, bootstrap = True):
-        mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
+        last_obs = self.env.current_time_step()
+        mb_obs = [tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), ]
+        mb_rewards = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_actions = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_raw_actions = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_values = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_dones = tf.TensorArray(tf.bool, size=0, dynamic_size = True)
+        mb_mu = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_L = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+
+        #mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
+
+        bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L]
+        n_step = 0
         
-        def single_step():
-            obs = self.obs
-            actions, raw_actions, values, neg_cash_pen, neg_shares_pen, mu, L = self.model.step(obs, training = self.training)
+        def single_step(bufs, last_obs):
+            mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = bufs
+            actions, raw_actions, values, mu, L = self.model.step(last_obs, training = self.training)
 
             # Append the experiences
-            mb_obs.append(obs.copy())
-            mb_actions.append(actions)
-            mb_raw_actions.append(raw_actions)
-            mb_values.append(values)
+            for n in range(len(mb_obs)):
+                mb_obs[n] = mb_obs[n].write(n_step, last_obs[n])
+            mb_actions = mb_actions.write(n_step, actions)
+            mb_raw_actions = mb_raw_actions.write(n_step, raw_actions)
+            mb_values = mb_values.write(n_step, values)
 
             #arrange penalties (not currently utilized)
-            neg_cash_pen = neg_cash_pen.numpy()
-            neg_shares_pen = neg_shares_pen.numpy()            
-            penalties = np.stack([neg_cash_pen, neg_shares_pen])
+
             
-            mb_mu.append(mu)
-            mb_L.append(L)
+            mb_mu = mb_mu.write(n_step, mu)
+            mb_L = mb_L.write(n_step, L)
 
             # Take actions in env and record the results
-            self.obs, rewards, dones = self.env.step(actions, penalties)
-            mb_rewards.append(rewards)
-            mb_dones.append(dones)
-            return
+            new_obs, rewards, dones = self.env.step(actions)
+
+            mb_rewards = mb_rewards.write(n_step, rewards)
+            mb_dones = mb_dones.write(n_step, dones)
+            return [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L], new_obs
 
         if until_done:
             done = False
             while not done:
-                single_step()
+                bufs, last_obs = single_step(bufs, last_obs)
+                n_step += 1
                 done = tf.reduce_any(mb_dones[-1])
         else:
             for n in range(self.nsteps):
-                single_step()
+                bufs, last_obs = single_step(bufs, last_obs)
+                n_step += 1
 
+        mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = bufs
         # batch of lists of steps to list of batches
-        mb_obs = list(zip(*mb_obs))
-        # list of batches of steps to list of batches of rollouts       
+        # mb_obs = list(zip(*mb_obs))
+        # list of batches of steps to list of batches of rollouts
         mb_obs = [sf01(mb_obs[i]) for i in range(len(self.obs_shape))]
         mb_actions = sf01(mb_actions)
         mb_raw_actions = sf01(mb_raw_actions)
-        mb_values = tf.transpose(mb_values, (1,0,2))
+        mb_values = tf.transpose(mb_values.stack(), (1,0,2))
         
         mb_mu = sf01(mb_mu)
         mb_L = sf01(mb_L)
@@ -77,30 +91,33 @@ class Runner:
 
         if self.gamma > 0.0 and self.training:
             # Discount/bootstrap off value fn
-            last_values = self.model.value(self.obs)
-            last_values = tf.expand_dims(tf.squeeze(last_values, axis=-1), 0)
-            done_in_end = mb_dones[-1] == [False]
-            bstrap_rewards = tf.concat((mb_rewards, last_values), 0 )
-            app = tf.fill(mb_dones[0].shape, False)
-            bstrap_dones = mb_dones.copy()
-            bstrap_dones.append(app)
+            last_values = self.model.value(last_obs)
+            last_values = tf.squeeze(last_values)
+            done_in_end = mb_dones.read(n_step - 1) == [False]
+            bstrap_rewards = mb_rewards.identity().write(n_step, last_values)
+            bstrap_rewards = bstrap_rewards.stack()
+            mb_rewards = bstrap_rewards[:-1]
+            app = tf.fill(mb_dones.element_shape, False)
+            bstrap_dones = mb_dones.write(n_step, app)
+            bstrap_dones = bstrap_dones.stack()
+            mb_dones = bstrap_dones[:-1]
             rewards_done = get_discounted_rewards(mb_rewards, mb_dones, self.gamma)
             rewards_not_done = get_discounted_rewards(bstrap_rewards, bstrap_dones, self.gamma)[:-1]
             mb_rewards = tf.where(done_in_end, rewards_done, rewards_not_done)
             
-        mb_rewards = tf.transpose(tf.stack(mb_rewards), (1,0))
-        mb_rewards = tf.cast(mb_rewards, tf.float64)
+        mb_rewards = tf.transpose(mb_rewards, (1,0))
         mb_rewards = tf.reshape(mb_rewards, [-1])
         mb_values = tf.reshape(mb_values, [-1])
-        return mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L
+        bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L]
+        return bufs
     
 
 # @tf.function(experimental_relax_shapes=True)
-def sf01(tensors):
+def sf01(tensorarray):
     """
     stack tensors, swap and then flatten axes 0 and 1
     """
-    tensor = tf.stack(tensors)
+    tensor = tensorarray.stack()
     s = tf.shape(tensor)
     rank = tf.rank(tensor)
     to_swap = tf.constant([1,0])
@@ -114,11 +131,10 @@ def sf01(tensors):
         perm = tf.constant([0])
     return tf.reshape(tf.transpose(tensor, perm), (s[0] * s[1],) + tuple(tf.unstack(s[2:])))
 
-@tf.function(experimental_relax_shapes=True)
 def get_discounted_rewards(rewards, dones, gamma):
     gamma = tf.cast(gamma, tf.float64)
-    rewards = tf.cast(tf.stack(rewards), tf.float64)
-    dones = tf.cast(tf.stack(dones), tf.float64)
+    rewards = tf.cast(rewards, tf.float64)
+    dones = tf.cast(dones, tf.float64)
     initializer = tf.zeros(rewards.shape[1], dtype = tf.float64)
     discounted = tf.scan(
         lambda acc, rew_done: rew_done[0] + gamma * acc * (tf.constant((1.,), dtype=tf.float64) - rew_done[1]),

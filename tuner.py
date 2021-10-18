@@ -31,7 +31,7 @@ def make_lr_func(hp):
         first_decay_steps = hp.Float('it_decay_steps', min_value = 1e4, max_value = 1e7, sampling = 'log')
         return CosineDecayRestarts(init_lr, first_decay_steps, m_mul = hp.Float('cos_decay_m_mul', min_value = 1.0, max_value = 2.0, default = constants.M_MUL))
     
-    init_lr = hp.Float('init_lr', min_value = 1e-7, max_value = 1e-2, sampling = 'log', default = constants.INIT_LR)
+    init_lr = hp.Float('init_lr', min_value = 1e-7, max_value = 5e-4, sampling = 'log', default = constants.INIT_LR)
     func_map = {'exp_decay': make_exp_decay, 'constant_lr': make_constant_lr, 'it_decay': make_it_decay, 'cos_restarts_decay': make_cos_restarts_decay}
     chosen_type = hp.Choice('lr_schedule_type', ['exp_decay', 'constant_lr', 'it_decay', 'cos_restarts_decay'], default = 'cos_restarts_decay')
     return func_map[chosen_type](init_lr, hp)
@@ -62,6 +62,26 @@ class MyTuner(Tuner):
         self.__dict__.update(kwargs)
         self.optimizer_weights = {}
     
+    
+    #credit to @bberlo in https://github.com/keras-team/keras-tuner/issues/175
+    def on_trial_end(self, trial):
+        """A hook called after each trial is run.
+        # Arguments:
+            trial: A `Trial` instance.
+        """
+        # Send status to Logger
+        if self.logger:
+            self.logger.report_trial_state(trial.trial_id, trial.get_state())
+
+        if trial.get_state().get("status") == 'INVALID':
+            self.oracle.end_trial(trial.trial_id, status = "INVALID")
+        else: self.oracle.end_trial(trial.trial_id)
+
+        self.oracle.update_space(trial.hyperparameters)
+        # Display needs the updated trial scored by the Oracle.
+        self._display.on_trial_end(self.oracle.get_trial(trial.trial_id))
+        self.save()
+    
     def run_trial(self, trial, datasets):
         hp = trial.hyperparameters
         
@@ -73,7 +93,11 @@ class MyTuner(Tuner):
             optimizer_weights = self.optimizer_weights[hp['mytrialid']]
             log_dir = hp.get('logdir')
         else:
-            model = self.hypermodel.build(hp)
+            try:
+                model = self.hypermodel.build(hp)
+            except Exception:
+                trial.status = 'INVALID'
+                return
             optimizer_weights = None
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
             log_dir = f'logs/trader/{time}'
@@ -121,7 +145,7 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 500000
+        steps_per_epoch = 50000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch)
         init_epoch = hp['tuner/initial_epoch']
@@ -148,7 +172,8 @@ class MyTuner(Tuner):
                   val_iterations = 1,
                   optimizer_init = optimizer_weights,
                   metrics = self.summary_metrics,
-                  writer = writer
+                  writer = writer,
+                  verbose = self.verbose
                   )
             
             logs = {'fitness': epoch_fitness}

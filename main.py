@@ -121,16 +121,13 @@ def main():
 
     # parser.add_argument('save_path', help = 'path to the folder used to save model weights as checkpoints', type = str)
     parser.add_argument('-d', '--input_dir', help = 'path to the dir including processed csv split into train, eval and test dirs', type=str)
-    parser.add_argument('-n', '--num_stocks', help = 'number of stocks the model is to have as an input', type=int)
-    parser.add_argument('-c', '--checkpoint', help = 'specify a checkpoint file to load weights from, if unspecified, will initiate model from scratch', type = str)
-    parser.add_argument('-l', '--use_latest', help = 'use latest checkpoint to continue training', action = 'store_true')
+    parser.add_argument('-v', '--verbose', help = 'use this flag if you want logs detailing training progress while running', action = 'store_true')
 
     args = parser.parse_args()
 
-    if args.num_stocks is not None:
-        constants.add('n_stocks', args.num_stocks)
-    else: constants.add('n_stocks', constants.DEFAULT_TICKERS)
 
+    constants.add('n_stocks', constants.DEFAULT_TICKERS)
+    verbose = args.verbose
     parentdir = args.input_dir
     constants.add('data_index', get_data_index(parentdir))
     constants.add('enddate', get_enddate(parentdir))
@@ -141,25 +138,26 @@ def main():
     
     train_arrs, eval_arrs, test_arrs = load_ids(parentdir)
     sec_cats = get_cats(train_arrs['sector_list'])
-    train_ds, eval_ds, test_ds = load_datasets(parentdir)
+    _, eval_ds, test_ds = load_datasets(parentdir)
     # shapes = ((constants.WINDOW_LENGTH, constants.others['n_stocks'], constants.others['data_index'].size),(constants.others['n_stocks'],),(constants.others['n_stocks'],))
     # train_ds = read_record(f'{parentdir}/train', shapes, batch_size = 512).repeat().shuffle(1024)
-    train_ds = tf.data.experimental.load('C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train').repeat().shuffle(1024)
+    train_ds = tf.data.experimental.load(f'{parentdir}/train').repeat().shuffle(1024)
     
     # train_ds = prepare_ds(train_ds, train_arrs, training=True)
     # train_ds = finish_ds(train_ds, train_arrs, training = True,
     #                       n_envs = constants.N_ENVS)
     
-    shard = tf.Variable(initial_value = -1, dtype = tf.int64)
-    def shard_func(*_):
-        if shard == 10:
-            return shard.assign(0)
-        else:
-            return tf.convert_to_tensor(shard.assign_add(1), dtype=tf.int64)
-        
-        
-    # tf.data.experimental.save(train_ds.take(16 * 16384), 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train',
+    # shard = tf.Variable(initial_value = -1, dtype = tf.int64)
+    # def shard_func(*_):
+    #     if shard == 1:
+    #         return shard.assign(0)
+    #     else:
+    #         return tf.convert_to_tensor(shard.assign_add(1), dtype=tf.int64)
+    # tf.data.experimental.save(train_ds.take(16 * 16384), 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed_clean/train',
     #                           shard_func = shard_func)
+    # raise SystemExit
+    
+    # alternative to save():
     # write_record(train_ds, 'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_yearlong/train')
     
     eval_ds = prepare_ds(eval_ds, eval_arrs, seed = 0)
@@ -211,7 +209,8 @@ def main():
                     sec_cats = sec_cats, train_arrs = train_arrs,
                     eval_arrs = eval_arrs, test_arrs = test_arrs,
                     # save_path = args.save_path,
-                    data_index = constants.others['data_index']) 
+                    data_index = constants.others['data_index'],
+                    verbose = verbose) 
     
     tuner.search((train_ds, eval_ds, test_ds))
     

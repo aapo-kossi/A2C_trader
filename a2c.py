@@ -31,11 +31,13 @@ class A2CModel:
         self.ent_c = ent_c
         self.max_grad_norm = max_grad_norm
         
-    @tf.function
+    #already wrapped by calling Runner
+    # @tf.function
     def step(self, obs, **kwargs):
         return self.model(obs, **kwargs)
     
-    @tf.function
+    #already wrapped by calling Runner
+    # @tf.function
     def value(self, obs):
         return self.model.value(obs)
 
@@ -48,7 +50,7 @@ class A2CModel:
         
         with tf.GradientTape() as tape:
             mu, L, vpred = self.model(obs, dist_features = True)
-            tf.debugging.assert_near(L, orig_L, rtol=0.0001, atol = 0.0001)
+            # tf.debugging.assert_near(L, orig_L, rtol=0.0001, atol = 0.0001)
             neglogpac, n_corrupt = neglogp(raw_actions, mu, L)
             entropy = self.entropy_loss(mu, L)
             vf_loss = self.value_loss(vpred, rewards)
@@ -235,23 +237,28 @@ def learn(
 
     accumulated_reward = 0.0
     for update in range(init_step, init_step + n_updates):
-        
-        obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
-        policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
-        
+        if update == 11:
+            with tf.profiler.experimental.Trace('train', step_num = update):        
+                obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
+                policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+        else:
+            obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
+            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
 
+    
         train_metrics['train_loss'].update_state(policy_loss + value_loss + entropy)
         train_metrics['train_pg_loss'].update_state(policy_loss)
         train_metrics['train_value_loss'].update_state(value_loss)
         train_metrics['train_ent'].update_state(entropy)
         train_metrics['train_rew'].update_state(rewards)
         
+        
         if update == 1:
             model.model.summary()
         if n_corrupt > 0:
             print(f'{n_corrupt} action(s) corrupt, for which no gradients propagated')
         nseconds = time.time() - t_start
-        fps = int((update * nenvs * steps_per_update)/nseconds)
+        fps = int(((update - init_step) * nenvs * steps_per_update)/nseconds)
 
         if  log_interval != 0 and update % log_interval == 0:
             if verbose:
@@ -262,6 +269,11 @@ def learn(
                 with writer.as_default():
                     [tf.summary.scalar(x, train_metrics[x].result(), step = update) for x in train_metrics]
                 [train_metrics[x].reset_state() for x in train_metrics]
+
+        if update == 10:
+            tf.profiler.experimental.start('logs/trader')
+        if update == 11:
+            tf.profiler.experimental.stop('logs/trader')
             
         if val_updates != 0 and update % val_updates == 0 and val_env is not None:
             accumulated_reward += validate(update)

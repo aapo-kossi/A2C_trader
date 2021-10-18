@@ -2,3 +2,5 @@
 *.csv
 *.tfrecord
 *.snapshot
+/logs/*
+/trader_optimization/*

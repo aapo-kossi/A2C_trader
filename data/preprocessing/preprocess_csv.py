@@ -36,15 +36,20 @@ def preprocess_chunk(df, dates, arrs, min_days):
     df = df.loc[df.index.get_level_values(1) < end]
     df = df.loc[df.index.get_level_values(1) >= start]
     if df.shape[0] < min_days: return None, arrs
+    if (df['ajexdi'] == 0).any(): return None, arrs
+    df['cshtrd'] = df['cshtrd'] / df['ajexdi']
     avg_vol = df['cshtrd'].sum() / df.shape[0]
     if avg_vol < constants.MIN_AVG_VOL: return None, arrs
     # print('enough datapoints to include')
     df.sort_index(inplace=True)
-    df['ajexdi'] = df['ajexdi'].replace(0,1)
     df[['prccd','prchd','prcld','prcod','divd','divsp']] = \
         df[['prccd','prchd','prcld','prcod','divd','divsp']].multiply(
         df['ajexdi'] ** -1,axis = 'index')
     df.fillna(0, inplace=True)
+    closes = df.prccd.reset_index(drop=True)
+    final = closes.tail(1)
+    offset_closes = df.prccd[1:].append(final).reset_index(drop=True)
+    if ((offset_closes / closes).replace(np.inf, 0.0) > 4).any(): return None, arrs
     df['dist'] = df['cheqv'] + df['divd'] + df['divsp']
     df.drop(['ajexdi','cheqv','divd','divsp', 'curcdd', 'LPERMNO'],axis='columns', inplace=True)
 
@@ -122,13 +127,13 @@ def main():
                 counter_str = str(counters[counter_idx]).zfill(6)
                 valid_name = f'{counter_str}_{"".join(x for x in arrs["conames"][-1] if x.isalnum())}'
                 counters[counter_idx] += 1
-                processed_df.to_csv(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/{label}/{valid_name}.csv')
+                processed_df.to_csv(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed_clean/{label}/{valid_name}.csv')
         print(f'rows processed so far: {read} / {total_rows}\ntime taken: {time.time() - start:.3f} seconds', end = '\033[A\r', flush=True)
         
     print()
 
     for label in ['train','eval','test']:
-        np.savez(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed/{label}/identifiers.npz',
+        np.savez(f'C:/Users/aapok/python_projects/TensorFlow/workspace/trader/A2C_trader/data/ccm4_processed_clean/{label}/identifiers.npz',
                  **arr_dicts[label])
         
     

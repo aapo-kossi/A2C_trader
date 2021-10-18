@@ -1,2 +1,0 @@
-This tfrecord set was generated using 250-day,
-10-stock windows into the ccm4 dataset from WRDS.

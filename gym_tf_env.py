@@ -31,6 +31,7 @@ class TradingEnv:
         self.init_capital = tf.cast(init_capital, tf.float64)
         self.window_data_index = tf.constant(data_index.to_numpy())
         self.data_index = drop_col(self.window_data_index, constants.others['data_index'].get_loc('date'))
+        self.data_rows = self.data_index.shape[0]
         self.sector_cats = tf.constant(sector_cats)
         self.n_secs = self.sector_cats.shape[0]
         self.total_days = train_windows.element_spec[0].shape[0]
@@ -83,6 +84,7 @@ class TradingEnv:
         equity = self.equity
         ohlcvd = tf.stack([self.ohlcvd[i,self.day[i] - self.input_days:self.day[i]] for i in range(self.num_envs)])
         ohlcvd = tf.cast(tf.transpose(ohlcvd, perm = [0,2,1,3]), tf.float64)
+        ohlcvd = tf.ensure_shape(ohlcvd, [self.num_envs, self.n_symbols, self.input_days, self.data_rows])
         lasts = self.get_lasts()
         capital = self.capital
         # tf.print(tf.math.reduce_any(tf.math.is_nan(onehots)))
@@ -125,11 +127,13 @@ class TradingEnv:
         return
         
     #faster performance step function
-    @tf.function
-    def step(self, action, penalties):
+    #already wrapped in tf.function by Runner
+    # @tf.function
+    def step(self, action):
         tf.debugging.assert_all_finite(action, 'action not finite...')
         #TODO: penalties not implemented and not a priority
         orig_mkt_value = self.get_mkt_val()
+        orig_capital = tf.convert_to_tensor(self.capital, dtype = tf.float64)
         lasts = self.get_lasts()
         divs = self.get_div()
 
@@ -152,6 +156,33 @@ class TradingEnv:
         to_reset = tf.math.logical_or(dones, on_margin)
 
         rewards = self.get_rewards(orig_mkt_value, on_margin)
+        if tf.reduce_max(rewards) > 1000.0:
+            tf.print('rewards:')
+            tf.print(rewards, summarize = -1)
+            tf.print('orig lasts:')
+            tf.print(lasts, summarize = -1)
+            tf.print('lasts:')
+            tf.print(self.get_lasts(), summarize = -1)
+            tf.print('actions:')
+            tf.print(a, summarize = -1)
+            tf.print('commissions:')
+            tf.print(commissions, summarize = -1)
+            tf.print('dividends:')
+            tf.print(e * divs, summarize = -1)
+            tf.print('equity:')
+            tf.print(self.equity, summarize = -1)
+            tf.print('capital:')
+            tf.print(self.capital, summarize = -1)
+            tf.print('pre-step capital:')
+            tf.print(orig_capital, summarize = -1)
+            tf.print('mkt_value:')
+            tf.print(self.get_mkt_val(), summarize = -1)
+            tf.print('original mkt_value:')
+            tf.print(orig_mkt_value, summarize = -1)
+            
+
+            tf.debugging.assert_less(tf.reduce_max(rewards), tf.cast(1000.0, tf.float64))            
+
         if tf.reduce_any(to_reset): self._reset(to_reset)
         return self.current_time_step(), rewards, to_reset
         
@@ -195,7 +226,7 @@ class TradingEnv:
         return commission
     
     def get_mkt_val(self):
-        return tf.squeeze(self.capital + tf.reduce_sum(tf.cast(self.equity, tf.float64) * self.get_lasts(), axis = 1, keepdims=True), axis = -1)
+        return tf.squeeze(self.capital + tf.reduce_sum(self.equity * self.get_lasts(), axis = 1, keepdims=True), axis = -1)
     
     def get_lasts(self):
         lasts_key = tf.constant('prccd')

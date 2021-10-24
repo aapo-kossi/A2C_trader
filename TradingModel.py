@@ -36,7 +36,7 @@ class deterministic_dropout(tf.keras.layers.Layer):
             dropmask = tf.cast(tf.random.stateless_categorical(self.log_p_drop, num_samples, seed), tf.bool)
             out = tf.where(dropmask, tf.zeros_like(inputs), inputs)
             return out
-        seed1 = tf.cast(tf.math.floormod(tf.math.reduce_sum(inputs, axis = -1) * 10002563.0 + 12875167.0, 349963), tf.int32)
+        seed1 = tf.cast(tf.math.floormod(tf.math.reduce_sum(inputs, axis = -1) * 10002563.0 + 12875167.0, 349963.0), tf.int32)
         seed2 = tf.cast(tf.math.floormod(tf.math.reduce_max(inputs, axis = -1) * 15005.0 + 8371.0, 11351.0), tf.int32 )
         seed = tf.transpose(tf.squeeze([seed1, seed2]))
         out = tf.vectorized_map(map_fn, (inputs, seed))
@@ -53,48 +53,71 @@ class Cholesky_from_z(tf.keras.layers.Layer):
         for i in range(self.size):
             for j in range(self.size):
                 if j < i: l_indices.append([i,j])
-        self.l_indices = tf.constant(l_indices)
+        self.l_indices = tf.expand_dims(tf.constant(l_indices),0)
         
         
     #can either map using TensorArrays or tf.scan, very similar performance on CPU
     def call(self, inputs):
         # tf.debugging.assert_all_finite(inputs, 'chol input not finite')
-        L = tf.map_fn(lambda x: self.accumulate_L(self.shaper(x)),inputs)
+        L = self.accumulate_squared_L(self.shaper(inputs))
+        # L = tf.map_fn(lambda x: self.accumulate_L(self.shaper(x)),inputs)
         # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
         return L
 
     def shaper(self, vector):
-        return tf.scatter_nd(self.l_indices, vector, (self.size, self.size))
+        batch_size = tf.shape(vector)[0]
+        batch_repeats = self.l_indices.shape[1]
+        batch_index = tf.repeat(tf.expand_dims(tf.expand_dims(tf.range(0,batch_size),-1),-1),batch_repeats,1)
+        batched_l_indices = tf.concat((batch_index, tf.repeat(self.l_indices,batch_size,0)),-1)
+        return tf.scatter_nd(batched_l_indices, vector, (batch_size, self.size, self.size))
         
-    def accumulate_L(self, z):
-        j_ta = tf.TensorArray(tf.float64, size =0, dynamic_size=True, clear_after_read=True, element_shape= [self.size])
+    def accumulate_squared_L(self, z):
+        signs = tf.math.sign(z)
+        signs = tf.where(signs == 0, tf.cast(1.,tf.float64),signs)
+        z_squared = z*z
+        x_squared = tf.zeros_like(z)
+        def iterate(j, x_squared):
+            z_col = z_squared[...,j]
+            uppers = tf.zeros(tf.shape(z)[:-1],dtype=tf.float64)[...,:j]
+            diag = [1.]-tf.math.reduce_sum(x_squared[...,j], axis=-1,keepdims=True)
+            lower = z_col[...,j+1:] * (1. -tf.math.reduce_sum(x_squared[...,j+1:,:],axis=-1))
+            col = tf.transpose(tf.expand_dims(tf.concat((uppers, diag, lower), -1),-2),perm = [0,2,1])
+            mat = tf.pad(col, [[0,0],[0,0],[j,self.size-1-j]])
+            x_squared += mat
+            return x_squared
         for j in range(self.size):
-            z_j = z[:,j]
-            uppers = tf.zeros(j, dtype = tf.float64)
-            diag = tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j])
-            diag = tf.expand_dims(diag, 0)
-            lower = z_j[j+1:] * tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j+1:])
-            j_ta = j_ta.write(j,tf.concat((uppers, diag, lower), 0))
-        L = tf.transpose(j_ta.stack())
-        return L
+            x_squared = iterate(j, x_squared)
+        return tf.sqrt(x_squared) * signs
+    
+    # def accumulate_L(self, z):
+    #     j_ta = tf.TensorArray(tf.float64, size =0, dynamic_size=True, element_shape= [self.size])
+    #     for j in range(self.size):
+    #         z_j = z[:,j]
+    #         uppers = tf.zeros(j, dtype = tf.float64)
+    #         diag = tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j])
+    #         diag = tf.expand_dims(diag, 0)
+    #         lower = z_j[j+1:] * tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j+1:])
+    #         j_ta = j_ta.write(j,tf.concat((uppers, diag, lower), 0))
+    #     L = tf.transpose(j_ta.stack())
+    #     return L
 
-    def scan_accumulate_L(self, z):
-        # tf.debugging.assert_all_finite(z, 'got non finite z')
-        initializer = (tf.zeros([self.size],dtype = tf.float64), tf.zeros([self.size],dtype = tf.float64))
-        def scan_func(a, t):
-            uppers = tf.zeros(t[1], dtype = tf.float64)
-            diag = tf.sqrt(1. - a[1])[t[1]]
-            diag = tf.expand_dims(diag, 0)
-            lower = t[0][t[1]+1:] * tf.sqrt(1. - a[1])[t[1]+1:]
-            col = tf.concat([uppers, diag, lower],0)
-            col = tf.ensure_shape(col, [self.size])
-            # col = tf.debugging.assert_all_finite(col, 'column of L not finite')
-            return col, a[1] + col ** 2
-        Lt = tf.scan(scan_func, (tf.transpose(z), tf.range(self.size,dtype=tf.int32)), initializer=initializer, parallel_iterations=16, infer_shape=False)
-        L = tf.transpose(Lt[0])
-        L = tf.ensure_shape(L, [self.size,self.size])
-        tf.debugging.assert_near(tf.linalg.diag_part(tf.matmul(L,L,transpose_b=True)),tf.ones(self.size,dtype=tf.float64), message = f'{tf.linalg.diag_part(L)}')
-        return L
+    # def scan_accumulate_L(self, z):
+    #     # tf.debugging.assert_all_finite(z, 'got non finite z')
+    #     initializer = (tf.zeros([self.size],dtype = tf.float64), tf.zeros([self.size],dtype = tf.float64))
+    #     def scan_func(a, t):
+    #         uppers = tf.zeros(t[1], dtype = tf.float64)
+    #         diag = tf.sqrt(1. - a[1])[t[1]]
+    #         diag = tf.expand_dims(diag, 0)
+    #         lower = t[0][t[1]+1:] * tf.sqrt(1. - a[1])[t[1]+1:]
+    #         col = tf.concat([uppers, diag, lower],0)
+    #         col = tf.ensure_shape(col, [self.size])
+    #         # col = tf.debugging.assert_all_finite(col, 'column of L not finite')
+    #         return col, a[1] + col ** 2
+    #     Lt = tf.scan(scan_func, (tf.transpose(z), tf.range(self.size,dtype=tf.int32)), initializer=initializer, parallel_iterations=16, infer_shape=False)
+    #     L = tf.transpose(Lt[0])
+    #     L = tf.ensure_shape(L, [self.size,self.size])
+    #     tf.debugging.assert_near(tf.linalg.diag_part(tf.matmul(L,L,transpose_b=True)),tf.ones(self.size,dtype=tf.float64), message = f'{tf.linalg.diag_part(L)}')
+    #     return L
 
 
         
@@ -292,7 +315,6 @@ class Trader(tf.keras.Model):
             max_kernel_size = 30
             max_conv_layers = 5 #tf.cast(tf.math.log(tf.cast(input_len, tf.float64)) / tf.math.log(tf.constant(2.0, dtype = tf.float64)), tf.int32)
             for n in range(hp.Int('conv_layers', min_value = 2, max_value = max_conv_layers, default = 3)):
-                print(input_len_tracker)
                 if input_len_tracker < max_kernel_size + 5: raise Exception
                 with hp.conditional_scope('conv_layers', list(range(n, max_conv_layers + 1))):
                     filters = hp.Int(f'conv{n}_filters', min_value = 8, max_value = 256, sampling = 'log', default = 2**(n+5))
@@ -311,7 +333,7 @@ class Trader(tf.keras.Model):
             model.add(tf.keras.layers.Flatten())
             for n in range(hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
                 model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 1024, step = 32, default = 256 / 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
-                model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
+                # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
 
         else:
             #transpose so that time dimension is first (after batch)

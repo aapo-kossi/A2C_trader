@@ -145,7 +145,7 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 50000
+        steps_per_epoch = 5000000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch)
         init_epoch = hp['tuner/initial_epoch']
@@ -173,6 +173,7 @@ class MyTuner(Tuner):
                   optimizer_init = optimizer_weights,
                   metrics = self.summary_metrics,
                   writer = writer,
+                  logdir = log_dir,
                   verbose = self.verbose
                   )
             

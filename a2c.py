@@ -161,6 +161,7 @@ def learn(
     optimizer_init = None,
     metrics = ({},{},{}),
     writer = None,
+    logdir=None,
     verbose = False,
     **network_kwargs):
     
@@ -241,10 +242,15 @@ def learn(
             with tf.profiler.experimental.Trace('train', step_num = update):        
                 obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
                 policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+        elif update == 2 and writer is not None:
+            tf.summary.trace_on(graph = True, profiler=True)
+            obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
+            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+            with writer.as_default():
+                tf.summary.trace_export(name= "step_trace", step = 0,profiler_outdir=logdir)
         else:
             obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
             policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
-
     
         train_metrics['train_loss'].update_state(policy_loss + value_loss + entropy)
         train_metrics['train_pg_loss'].update_state(policy_loss)

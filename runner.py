@@ -66,11 +66,11 @@ class Runner:
             return [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L], new_obs
 
         if until_done:
-            done = False
+            done = tf.constant(False)
             while not done:
                 bufs, last_obs = single_step(bufs, last_obs)
+                done = tf.reduce_any(bufs[5].read(n_step))
                 n_step += 1
-                done = tf.reduce_any(mb_dones[-1])
         else:
             for n in range(self.nsteps):
                 bufs, last_obs = single_step(bufs, last_obs)
@@ -92,9 +92,9 @@ class Runner:
         if self.gamma > 0.0 and self.training:
             # Discount/bootstrap off value fn
             last_values = self.model.value(last_obs)
-            last_values = tf.squeeze(last_values)
+            last_values = tf.squeeze(last_values,-1)
             done_in_end = mb_dones.read(n_step - 1) == [False]
-            bstrap_rewards = mb_rewards.identity().write(n_step, last_values)
+            bstrap_rewards = mb_rewards.write(n_step, last_values)
             bstrap_rewards = bstrap_rewards.stack()
             mb_rewards = bstrap_rewards[:-1]
             app = tf.fill(mb_dones.element_shape, False)
@@ -104,12 +104,15 @@ class Runner:
             rewards_done = get_discounted_rewards(mb_rewards, mb_dones, self.gamma)
             rewards_not_done = get_discounted_rewards(bstrap_rewards, bstrap_dones, self.gamma)[:-1]
             mb_rewards = tf.where(done_in_end, rewards_done, rewards_not_done)
-            
+        else:
+            mb_rewards = mb_rewards.stack()
+        
         mb_rewards = tf.transpose(mb_rewards, (1,0))
         mb_rewards = tf.reshape(mb_rewards, [-1])
         mb_values = tf.reshape(mb_values, [-1])
         bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L]
         return bufs
+
     
 
 # @tf.function(experimental_relax_shapes=True)
@@ -135,9 +138,10 @@ def get_discounted_rewards(rewards, dones, gamma):
     gamma = tf.cast(gamma, tf.float64)
     rewards = tf.cast(rewards, tf.float64)
     dones = tf.cast(dones, tf.float64)
+    one = tf.constant((1.,),dtype=tf.float64)
     initializer = tf.zeros(rewards.shape[1], dtype = tf.float64)
     discounted = tf.scan(
-        lambda acc, rew_done: rew_done[0] + gamma * acc * (tf.constant((1.,), dtype=tf.float64) - rew_done[1]),
+        lambda acc, rew_done: rew_done[0] + gamma * acc * (one - rew_done[1]),
         (rewards, dones),
         initializer,
         reverse = True)

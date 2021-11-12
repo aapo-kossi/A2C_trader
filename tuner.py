@@ -80,7 +80,7 @@ class MyTuner(Tuner):
         self._display.on_trial_end(self.oracle.get_trial(trial.trial_id))
         self.save()
     
-    def run_trial(self, trial, datasets):
+    def run_trial(self, trial, datasets, verbose = False):
         hp = trial.hyperparameters
         
         

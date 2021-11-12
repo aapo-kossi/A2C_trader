@@ -20,7 +20,7 @@ class Runner:
         self.env = env
         self.model = model
         self.nsteps = nsteps
-        self.gamma = gamma
+        self.gamma = tf.constant(gamma, dtype=tf.float64)
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
         
@@ -135,8 +135,6 @@ def sf01(tensorarray):
     return tf.reshape(tf.transpose(tensor, perm), (s[0] * s[1],) + tuple(tf.unstack(s[2:])))
 
 def get_discounted_rewards(rewards, dones, gamma):
-    gamma = tf.cast(gamma, tf.float64)
-    rewards = tf.cast(rewards, tf.float64)
     dones = tf.cast(dones, tf.float64)
     one = tf.constant((1.,),dtype=tf.float64)
     initializer = tf.zeros(rewards.shape[1], dtype = tf.float64)

@@ -44,7 +44,6 @@ class A2CModel:
     @tf.function
     def train(self, obs, rewards, raw_actions, values, orig_mu, orig_L):
         advs = rewards - values
-        
         #normalizing advantages:
         # advs = advs - tf.reduce_mean(advs) / (tf.keras.backend.std(advs) + 1e-8)
         
@@ -242,12 +241,16 @@ def learn(
             with tf.profiler.experimental.Trace('train', step_num = update):        
                 obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
                 policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
-        elif update == 2 and writer is not None:
-            tf.summary.trace_on(graph = True, profiler=True)
+        elif update == 1 and writer is not None:
+            tf.summary.trace_on(graph = True)
             obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
-            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
             with writer.as_default():
                 tf.summary.trace_export(name= "step_trace", step = 0,profiler_outdir=logdir)
+            tf.summary.trace_on(graph = True)
+            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+            with writer.as_default():
+                tf.summary.trace_export(name= "train_trace", step = 0,profiler_outdir=logdir)
+
         else:
             obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
             policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
@@ -261,6 +264,7 @@ def learn(
         
         if update == 1:
             model.model.summary()
+            model.model.get_layer('temporal_network').summary()
         if n_corrupt > 0:
             print(f'{n_corrupt} action(s) corrupt, for which no gradients propagated')
         nseconds = time.time() - t_start

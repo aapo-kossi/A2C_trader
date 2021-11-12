@@ -19,22 +19,20 @@ from utils import finish_ds
 
 
 def make_lr_func(hp):
-    def make_exp_decay(init_lr, hp):
-        decay_steps = hp.Float('exp_decay_steps', min_value = 1e4, max_value = 1e7, sampling = 'log')
+    def make_exp_decay(init_lr, decay_steps, hp):
         return ExponentialDecay(init_lr, decay_steps, 0.96)
     def make_constant_lr(init_lr, hp):
         return init_lr
-    def make_it_decay(init_lr, hp):
-        decay_steps = hp.Float('it_decay_steps', min_value = 1e4, max_value = 1e7, sampling = 'log')
+    def make_it_decay(init_lr, decay_steps, hp):
         return InverseTimeDecay(init_lr, decay_steps, 1.0)
-    def make_cos_restarts_decay(init_lr, hp):
-        first_decay_steps = hp.Float('it_decay_steps', min_value = 1e4, max_value = 1e7, sampling = 'log')
-        return CosineDecayRestarts(init_lr, first_decay_steps, m_mul = hp.Float('cos_decay_m_mul', min_value = 1.0, max_value = 2.0, default = constants.M_MUL))
+    def make_cos_restarts_decay(init_lr, decay_steps, hp):
+        return CosineDecayRestarts(init_lr, decay_steps, m_mul = hp.Float('cos_decay_m_mul', min_value = 1.0, max_value = 2.0, default = constants.M_MUL))
     
-    init_lr = hp.Float('init_lr', min_value = 1e-7, max_value = 5e-4, sampling = 'log', default = constants.INIT_LR)
+    init_lr = hp.Float('init_lr', min_value = 1e-6, max_value = 5e-4, sampling = 'log', default = constants.INIT_LR)
+    decay_steps = hp.Float('it_decay_steps', min_value = 5e4, max_value = 1e6, sampling = 'log', default = constants.INIT_DECAY_STEPS)
     func_map = {'exp_decay': make_exp_decay, 'constant_lr': make_constant_lr, 'it_decay': make_it_decay, 'cos_restarts_decay': make_cos_restarts_decay}
     chosen_type = hp.Choice('lr_schedule_type', ['exp_decay', 'constant_lr', 'it_decay', 'cos_restarts_decay'], default = 'cos_restarts_decay')
-    return func_map[chosen_type](init_lr, hp)
+    return func_map[chosen_type](init_lr, decay_steps, hp)
 
 
 class MyTuner(Tuner):
@@ -112,7 +110,8 @@ class MyTuner(Tuner):
         cost_minimum = hp.Float('cost_minimum', min_value = 0.0, max_value = 5.0, default = constants.MIN_COST)
         train_ds, eval_ds, test_ds = datasets
         
-        n_batch = hp.Int('n_batch', min_value = 8, max_value = 32, step = 8)
+        
+        n_batch = hp.Fixed('batch_size', value = 64)
         train_env = TradingEnv(train_ds, self.data_index,
                                self.sec_cats, (output_shape,),
                                n_envs = n_batch,
@@ -145,7 +144,7 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 5000000
+        steps_per_epoch = 500000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch)
         init_epoch = hp['tuner/initial_epoch']
@@ -167,6 +166,7 @@ class MyTuner(Tuner):
                   test_steps=constants.TEST_TIME,
                   total_timesteps = steps_per_epoch,
                   init_step = init_step,
+                  vf_coef = hp.Float('vf_coef', min_value = 0.2, max_value = 5.0, sampling = 'log', default = 1.0),
                   gamma= hp.Float('gamma', min_value = 0.0, max_value = 1.0, sampling = 'linear', default = constants.GAMMA),
                   log_interval = 10,
                   val_iterations = 1,

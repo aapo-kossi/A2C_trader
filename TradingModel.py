@@ -145,9 +145,10 @@ class Buy_limiter(tf.keras.layers.Layer):
             
 
 class Arranger(tf.keras.layers.Layer):
-    def __init__(self):
+    def __init__(self, close_idx):
         super(Arranger, self).__init__(trainable = False)
         self.nil = tf.constant(0, dtype = tf.float64)
+        self.close_idx = tf.constant(close_idx)
 
     def call(self, inputs):
         """
@@ -160,7 +161,7 @@ class Arranger(tf.keras.layers.Layer):
         """
         ochlv = inputs[2]
         shape = ochlv.shape
-        closes = ochlv[... , constants.others['data_index'].get_loc('prccd') ]
+        closes = ochlv[... , self.close_idx]
         condition = tf.not_equal(closes, self.nil)
         ragged = tf.ragged.boolean_mask(closes, condition)
         starts = ragged.to_tensor(default_value = 0, shape = (shape[:-1]))[... ,0]
@@ -178,7 +179,7 @@ class Trader(tf.keras.Model):
     inputs: 1st encoded categories, 2nd equity, 3rd stock data, 4th last prices, 5th current capital
     
     """
-    def __init__(self, output_shape, hp):
+    def __init__(self, output_shape, hp, close_idx):
         """
         inputs: 1, output shape of actor network, essentially n_stocks that is desirable to be traded
                 2, hyperparameters for the model, which impact the model architecture and size
@@ -186,7 +187,7 @@ class Trader(tf.keras.Model):
         super(Trader, self).__init__()
         
         #initializing the model layers
-        self.arrange = Arranger()
+        self.arrange = Arranger(close_idx)
         self.normalizer = Lambda(self.normalize_features)
         self.flatten_features_and_days = Lambda(lambda x: tf.reshape(x, [ x.shape[0] , x.shape[1] , -1 ]), trainable = False)
         self.encoder = self.make_mlp(hp)
@@ -209,7 +210,7 @@ class Trader(tf.keras.Model):
 
         # inputs = [tf.cast(x, tf.float64) for x in inputs]
 
-        [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
+        # [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
         
         (x, e, y, p), orders = self.arrange(inputs[:4])
         c = inputs[4]
@@ -312,17 +313,18 @@ class Trader(tf.keras.Model):
         input_len = hp.Int('input_days', min_value = 60, max_value = 120, step = 10, default = 80)#min_value= 10, max_value = 120, step = 10, default = 80)
         if architecture == 'Conv1D':
             input_len_tracker = input_len
-            max_kernel_size = 30
-            max_conv_layers = 5 #tf.cast(tf.math.log(tf.cast(input_len, tf.float64)) / tf.math.log(tf.constant(2.0, dtype = tf.float64)), tf.int32)
-            for n in range(hp.Int('conv_layers', min_value = 2, max_value = max_conv_layers, default = 3)):
+            max_kernel_size = 10
+            for n in range(hp.Int('conv_layers', min_value = 2, max_value = 5, default = 3)):
+                print(f'convolutional layer {n} input length {input_len_tracker}')
                 if input_len_tracker < max_kernel_size + 5: raise Exception
-                with hp.conditional_scope('conv_layers', list(range(n, max_conv_layers + 1))):
-                    filters = hp.Int(f'conv{n}_filters', min_value = 8, max_value = 256, sampling = 'log', default = 2**(n+5))
+                with hp.conditional_scope('conv_layers', list(range(n, 6))):
+                    filters = hp.Int(f'conv{n}_filters', min_value = 16, max_value = 512, step = 16, default = 2**(n+5))
                     kernel_size = hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, sampling = 'linear', default = 9 - n)
                     padding = hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'same')
+                    model.add(Conv1D(filters, kernel_size, padding='same', activation = swish))
                     model.add(Conv1D(filters, kernel_size, padding=padding, activation = swish))
                     model.add(MaxPool2D(pool_size=(1,2),strides = (1,2)))
-                    max_kernel_size  = max_kernel_size - 4
+                    max_kernel_size  = max_kernel_size - 1
                     if padding == 'same':
                         input_len_tracker = input_len // 2
                     else:
@@ -332,7 +334,7 @@ class Trader(tf.keras.Model):
                     
             model.add(tf.keras.layers.Flatten())
             for n in range(hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
-                model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 1024, step = 32, default = 256 / 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
+                model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 512, step = 32, default = 256 // 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
                 # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
 
         else:
@@ -340,10 +342,11 @@ class Trader(tf.keras.Model):
             #flatten channels and stocks
             model.add(Lambda(lambda x: tf.transpose(x, [0,2,1,3])))
             model.add(Lambda(lambda x: tf.reshape(x, tuple(tf.unstack(tf.shape(x)[:-2])) + (-1,))))
-            for n in range(hp.Int('lstm_layers', min_value = 1, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['LSTM']) - 1):
-                units = hp.Int(f'lstm{n}_units', min_value = 256 // 2, max_value = 2048 // 2, step = 256 // 2, default = 512 // 2, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
+            for n in range(hp.Int('lstm_layers', min_value = 1, max_value = 4, default = 3, parent_name = 'temporal_nn_type', parent_values = ['LSTM']) - 1):
+                units = hp.Int(f'lstm{n}_units', min_value = 128, max_value = 512, step = 64, default = 256, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])*2
+                print(units)
                 model.add(LSTM(units, return_sequences = True, name = f'temporal_{n}'))
-            final_units = hp.Int('last_lstm_units', min_value = 256 // 2, max_value = 2048 // 2, step = 256 // 2, default = 512 // 2, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
+            final_units = hp.Int('last_lstm_units', min_value = 128, max_value = 512, step = 64, default = 256, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])*2
             model.add(LSTM(final_units, name = 'last_temporal'))
 
         # model.add(Conv1D(32, 5, activation = swish))
@@ -365,13 +368,13 @@ class Trader(tf.keras.Model):
         """
         Returns
         -------
-        model : TF MODEL WITH OUTPUT SHAPE (BATCH, 2*prod(dim[1:]))???.
+        model : TF MODEL WITH OUTPUT SHAPE (BATCH, units).
     
         """
         model = tf.keras.Sequential(name = 'autoencoder')
         model.add(tf.keras.layers.Flatten())
         for n in range(hp.Int('mlp_layers', min_value = 1, max_value = 3, default = 2)):
-            units = hp.Int(f'mlp{n}_units', min_value = 10, max_value = 100, step = 10, default = 32 // 2**n)
+            units = hp.Int(f'mlp{n}_units', min_value = 8, max_value = 64, step = 8, default = 32 // 2**n)
             model.add(Dense(units, activation = swish, name = f'autoencoder_{n}'))
 
         return model
@@ -387,8 +390,8 @@ class Trader(tf.keras.Model):
 
     def make_common_dense(self, output_shape, hp):
         model = tf.keras.Sequential(name = 'common')
-        for n in range(hp.Int('common_layers', min_value = 1, max_value = 4, default = 3)):
-            units = hp.Int(f'common{n}_units', min_value = 1, max_value = 129, step = 4, default = 32 // 2**n)
+        for n in range(hp.Int('common_layers', min_value = 1, max_value = 3, default = 2)):
+            units = hp.Int(f'common{n}_units', min_value = 16, max_value = 128, step = 16, default = 128 // 2**n)
             model.add(Dense(output_shape * units, activation = swish, name = f'common{n}'))
         return model, (output_shape * units,)
     
@@ -474,12 +477,13 @@ class Trader(tf.keras.Model):
         return tf.math.divide_no_nan((inputs - means), stdevs)
     
 class HyperTrader(kt.HyperModel):
-    def __init__(self, out_shape):
+    def __init__(self, out_shape, close_idx):
         super(HyperTrader, self).__init__()
         self.out_shape = out_shape
+        self.close_idx = close_idx
     
     def build(self, hp):
-        model = Trader(self.out_shape, hp)
+        model = Trader(self.out_shape, hp, self.close_idx)
         return model
 
         

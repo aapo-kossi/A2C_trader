@@ -30,7 +30,8 @@ class TradingEnv:
         
         self.init_capital = tf.cast(init_capital, tf.float64)
         self.window_data_index = tf.constant(data_index.to_numpy())
-        self.data_index = drop_col(self.window_data_index, constants.others['data_index'].get_loc('date'))
+        self.date_col = data_index.get_loc('date')
+        self.data_index = drop_col(self.window_data_index, self.date_col)
         self.data_rows = self.data_index.shape[0]
         self.sector_cats = tf.constant(sector_cats)
         self.n_secs = self.sector_cats.shape[0]
@@ -124,7 +125,7 @@ class TradingEnv:
         new_dates = new_ohlcvd[:,:,0,tf.squeeze(tf.where(self.window_data_index == 'date'))]
         self.dates.scatter_nd_update(index, new_dates)
         self.onehot_secs.scatter_nd_update(index, new_secs)
-        new_ohlcvd = drop_col(new_ohlcvd, tf.squeeze(tf.where(self.window_data_index == 'date')))
+        new_ohlcvd = drop_col(new_ohlcvd, self.date_col)
         if self.noisy:
             new_ohlcvd = self.add_noise(new_ohlcvd)
         self.ohlcvd.scatter_nd_update(index, tf.cast(new_ohlcvd,tf.float64))

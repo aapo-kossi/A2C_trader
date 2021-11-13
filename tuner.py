@@ -6,7 +6,6 @@ Created on Sat Aug 14 00:08:43 2021
 """
 
 from datetime import datetime
-import numpy as np
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hparams_api
 from keras_tuner.engine.tuner import Tuner
@@ -15,13 +14,17 @@ from gym_tf_env import TradingEnv
 from a2c import learn
 from tensorflow.keras.optimizers.schedules import ExponentialDecay, CosineDecayRestarts, InverseTimeDecay
 import constants
-from utils import finish_ds
+import shutil
 
+try:
+    import google.colab
+    IN_COLAB = True
+except: IN_COLAB = False
 
 def make_lr_func(hp):
     def make_exp_decay(init_lr, decay_steps, hp):
         return ExponentialDecay(init_lr, decay_steps, 0.96)
-    def make_constant_lr(init_lr, hp):
+    def make_constant_lr(init_lr,_, hp):
         return init_lr
     def make_it_decay(init_lr, decay_steps, hp):
         return InverseTimeDecay(init_lr, decay_steps, 1.0)
@@ -58,8 +61,7 @@ class MyTuner(Tuner):
                                       tuner_id=tuner_id,
                                       overwrite=overwrite)
         self.__dict__.update(kwargs)
-        self.optimizer_weights = {}
-    
+
     
     #credit to @bberlo in https://github.com/keras-team/keras-tuner/issues/175
     def on_trial_end(self, trial):
@@ -79,7 +81,14 @@ class MyTuner(Tuner):
         # Display needs the updated trial scored by the Oracle.
         self._display.on_trial_end(self.oracle.get_trial(trial.trial_id))
         self.save()
-    
+        if IN_COLAB:
+            # replace the log directories that can persist across multiple VM sessions with up-to-date versions
+            shutil.rmtree(f'/content/drive/mydrive/{self.project_name}', ignore_errors=True)
+            shutil.rmtree('/content/drive/mydrive/trader_tb_logs', ignore_errors=True)
+            shutil.copytree(self.project_name, f'/content/drive/mydrive/{self.project_name}') #dirs_exist_ok=True after colab updates to python 3.8
+            shutil.copytree('logs', '/content/drive/mydrive/trader_tb_logs')
+            
+                
     def run_trial(self, trial, datasets, verbose = False):
         hp = trial.hyperparameters
         
@@ -88,7 +97,6 @@ class MyTuner(Tuner):
         if "tuner/trial_id" in hp:
             past_trial = self.oracle.get_trial(hp["tuner/trial_id"])
             model = self.load_model(past_trial)
-            optimizer_weights = self.optimizer_weights[hp['mytrialid']]
             log_dir = hp.get('logdir')
         else:
             try:
@@ -96,11 +104,9 @@ class MyTuner(Tuner):
             except Exception:
                 trial.status = 'INVALID'
                 return
-            optimizer_weights = None
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
             log_dir = f'logs/trader/{time}'
             hp.Fixed('logdir', log_dir)
-            my_trialid = hp.Fixed('mytrialid', time)
 
         writer = tf.summary.create_file_writer(log_dir)
 
@@ -154,8 +160,7 @@ class MyTuner(Tuner):
         #TODO: call a2c.learn with hparams
         for epoch in range(init_epoch, last_epoch):
             init_step = epoch * updates_per_epoch + 1
-            self.on_epoch_begin(trial, model, epoch, logs = None)
-            trained_model, epoch_fitness, new_optimizer_weights = learn(
+            trained_model, epoch_fitness = learn(
                   model,
                   train_env,
                   lr,
@@ -170,7 +175,6 @@ class MyTuner(Tuner):
                   gamma= hp.Float('gamma', min_value = 0.0, max_value = 1.0, sampling = 'linear', default = constants.GAMMA),
                   log_interval = 10,
                   val_iterations = 1,
-                  optimizer_init = optimizer_weights,
                   metrics = self.summary_metrics,
                   writer = writer,
                   logdir = log_dir,
@@ -185,9 +189,8 @@ class MyTuner(Tuner):
                 hparams_api.hparams(hparams)
                 
             self.on_epoch_end(trial, model, epoch, logs = logs)
-            print(f'trained epoch {epoch} on trial {my_trialid}')
+            print(f'trained epoch {epoch} on trial {trial.trial_id}')
             
-        self.optimizer_weights[hp['mytrialid']] = new_optimizer_weights
 
 
             

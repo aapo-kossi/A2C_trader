@@ -103,7 +103,7 @@ class TradingEnv:
         # tf.print(tf.math.reduce_any(tf.math.is_nan(capital)))
         return [ tf.convert_to_tensor(ob, dtype=tf.float64) for ob in [onehots, equity, ohlcvd, lasts, capital]]
     
-    @tf.function
+    # @tf.function
     def reset(self):
         trues = tf.fill([self.num_envs], True)
         self._reset(trues)

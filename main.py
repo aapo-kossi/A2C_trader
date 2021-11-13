@@ -28,14 +28,14 @@ from tuner import MyTuner
 import utils
 import TradingModel
 import constants
-
+import sys
 
 
 
 def main():
     
     print('started')
-
+    
     parser = argparse.ArgumentParser(description='Train a neural network to trade n stocks concurrently, '\
                                                  'provided a .csv file of stock data.')
 
@@ -87,7 +87,7 @@ def main():
     hp.Fixed('cost_minimum', constants.MIN_COST)
     hp.Fixed('steps_per_update', 16)
     
-    oracle = kt.oracles.Hyperband(kt.Objective('fitness','max'), max_epochs = 50, hyperparameters = hp)
+    oracle = kt.oracles.Hyperband(kt.Objective('fitness','max'), max_epochs = 30, hyperparameters = hp)
     
         
     tuner = MyTuner(oracle, hypermodel, summary_metrics = metrics, project_name = 'trader_optimization', n_stocks = constants.DEFAULT_TICKERS,
@@ -95,11 +95,11 @@ def main():
                     eval_arrs = eval_arrs, test_arrs = test_arrs,
                     # save_path = args.save_path,
                     data_index = data_index,
-                    verbose = verbose) 
+                    verbose = verbose,) 
     
     tuner.search((train_ds, eval_ds, test_ds), verbose=verbose)
     
-    best_hparams = tuner.get_best_hyperparameters()
+    best_hparams = tuner.get_best_hyperparameters().values
     print(best_hparams)
 
     

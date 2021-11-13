@@ -12,7 +12,6 @@ import constants
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-from tensorflow.keras.optimizers.schedules import CosineDecayRestarts as Cdr, InverseTimeDecay as Itd
 
 
 # from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
@@ -22,11 +21,9 @@ from runner import Runner
 #classes A2CModel and the learn function slightly modified from baselines A2C implementation
 #found at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
 class A2CModel:
-    def __init__(self, env, model, lr_func, value_c, ent_c, max_grad_norm, alpha, epsilon, optimizer_init):
+    def __init__(self, env, model, lr_func, value_c, ent_c, max_grad_norm, alpha, epsilon):
         self.model = model
         self.optimizer = tf.keras.optimizers.RMSprop(learning_rate = lr_func, rho = alpha, epsilon = epsilon)
-        if optimizer_init is not None:
-            self.optimizer.set_weights(optimizer_init)
         self.value_c = value_c
         self.ent_c = ent_c
         self.max_grad_norm = max_grad_norm
@@ -80,10 +77,7 @@ def neglogp(action, mu, L):
     n = tf.cast(action.shape[-1], tf.float64)
 
     vec_diff = tf.expand_dims(action - mu, -1)
-    # tf.debugging.assert_equal(L, tf.eye(L.shape[1],batch_shape=[L.shape[0]],dtype=tf.float64), 'L not I')
-    # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
-    tf.debugging.assert_positive(tf.linalg.diag_part(L), 'L diagonal not positive')
-    
+
     y = tf.linalg.triangular_solve(L, vec_diff)
     vec_diff_ = tf.linalg.matvec(L, tf.squeeze(y, axis = -1))
     good_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-5)
@@ -95,7 +89,7 @@ def neglogp(action, mu, L):
         tf.print('numerical issues')
     any_good_L = tf.reduce_any(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-8)
     if not any_good_L:
-        tf.print('network has gone to shit, no valid covariance matrices so cannot update weights')
+        tf.print('no valid covariance matrices, updating weights impossible')
     
     x = tf.linalg.triangular_solve(tf.linalg.matrix_transpose(L), y, lower = False)
     
@@ -157,7 +151,6 @@ def learn(
     ckpt_interval = 1e4,
     val_iterations = 1,
     MAR=None,
-    optimizer_init = None,
     metrics = ({},{},{}),
     writer = None,
     logdir=None,
@@ -169,8 +162,8 @@ def learn(
     
     #instantiating the A2c model object
 
-    model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon, optimizer_init)
- 
+    model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon)
+    set_optimizer_iter(env, model, model.optimizer, init_step-1)
 
     
     # load_path = osp.expanduser(ckpt_path)
@@ -180,6 +173,7 @@ def learn(
     #     ckpt.restore(manager.latest_checkpoint)
     # elif initial_ckpt is not None:
     #     ckpt.restore(initial_ckpt)
+
     
     runner = Runner(env, model, steps_per_update, gamma)
     
@@ -236,6 +230,7 @@ def learn(
     else: val_updates = 0
 
     accumulated_reward = 0.0
+
     for update in range(init_step, init_step + n_updates):
         if update == 11:
             with tf.profiler.experimental.Trace('train', step_num = update):        
@@ -288,7 +283,18 @@ def learn(
         if val_updates != 0 and update % val_updates == 0 and val_env is not None:
             accumulated_reward += validate(update)
                         
-    return model, accumulated_reward, model.optimizer.variables()
+    return model, accumulated_reward
+
+def set_optimizer_iter(env, model, optimizer, step):
+    obs = env.current_time_step()
+    model.step(obs)
+    trainable_vars = model.model.trainable_weights
+    zero_grads = [tf.zeros_like(w) for w in trainable_vars]
+    model.optimizer.apply_gradients(zip(zero_grads, trainable_vars))
+    opt_vars = model.optimizer.get_weights()
+    opt_vars[0] = np.array(step)
+    model.optimizer.set_weights(opt_vars)
+    
 
 
 

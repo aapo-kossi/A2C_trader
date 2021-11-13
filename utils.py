@@ -5,6 +5,7 @@ Created on Wed Aug 25 12:04:41 2021
 @author: Aapo Kössi
 """
 
+import os
 import numpy as np
 import pandas as pd
 import math
@@ -12,6 +13,7 @@ from matplotlib import pyplot as plt
 import tensorflow as tf
 import glob
 import csv
+import zipfile
 import constants
 
 
@@ -240,3 +242,6 @@ def setup_metrics():
                'test_pg_loss': test_pg_loss_metric,
                'test_loss': test_loss_metric,}
     return train_metrics, eval_metrics, test_metrics
+
+
+

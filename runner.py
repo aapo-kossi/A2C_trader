@@ -24,17 +24,17 @@ class Runner:
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
         
-    @tf.function
     def run(self, until_done = False, bootstrap = True):
+        size = self.nsteps
         last_obs = self.env.current_time_step()
-        mb_obs = [tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), tf.TensorArray(tf.float64, size=0, dynamic_size = True), ]
-        mb_rewards = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
-        mb_actions = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
-        mb_raw_actions = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
-        mb_values = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
-        mb_dones = tf.TensorArray(tf.bool, size=0, dynamic_size = True)
-        mb_mu = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
-        mb_L = tf.TensorArray(tf.float64, size=0, dynamic_size = True)
+        mb_obs = [tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), ]
+        mb_rewards = tf.TensorArray(tf.float64, size=size+1)
+        mb_actions = tf.TensorArray(tf.float64, size=size)
+        mb_raw_actions = tf.TensorArray(tf.float64, size=size)
+        mb_values = tf.TensorArray(tf.float64, size=size)
+        mb_dones = tf.TensorArray(tf.bool, size=size+1)
+        mb_mu = tf.TensorArray(tf.float64, size=size)
+        mb_L = tf.TensorArray(tf.float64, size=size)
 
         #mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
 
@@ -46,8 +46,7 @@ class Runner:
             actions, raw_actions, values, mu, L = self.model.step(last_obs, training = self.training)
 
             # Append the experiences
-            for n in range(len(mb_obs)):
-                mb_obs[n] = mb_obs[n].write(n_step, last_obs[n])
+            mb_obs = [mb_obs[n].write(n_step, last_obs[n]) for n in range(len(mb_obs))]
             mb_actions = mb_actions.write(n_step, actions)
             mb_raw_actions = mb_raw_actions.write(n_step, raw_actions)
             mb_values = mb_values.write(n_step, values)
@@ -77,9 +76,7 @@ class Runner:
                 n_step += 1
 
         mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = bufs
-        # batch of lists of steps to list of batches
-        # mb_obs = list(zip(*mb_obs))
-        # list of batches of steps to list of batches of rollouts
+
         mb_obs = [sf01(mb_obs[i]) for i in range(len(self.obs_shape))]
         mb_actions = sf01(mb_actions)
         mb_raw_actions = sf01(mb_raw_actions)
@@ -145,7 +142,6 @@ def get_discounted_rewards(rewards, dones, gamma):
         reverse = True)
     return discounted
 
-
         
         
         
@@ -155,12 +151,3 @@ def get_discounted_rewards(rewards, dones, gamma):
         
         
         
-        
-        
-        
-        
-        
-        
-        
-        
-    

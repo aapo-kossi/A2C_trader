@@ -12,6 +12,7 @@ import constants
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+from tensorflow.keras.optimizers.schedules import CosineDecayRestarts as Cdr, InverseTimeDecay as Itd
 
 
 # from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN
@@ -29,16 +30,16 @@ class A2CModel:
         self.max_grad_norm = max_grad_norm
         
     #already wrapped by calling Runner
-    # @tf.function
+    #@tf.function(jit_compile=True)
     def step(self, obs, **kwargs):
         return self.model(obs, **kwargs)
     
     #already wrapped by calling Runner
-    # @tf.function
+    #@tf.function(jit_compile=True)
     def value(self, obs):
         return self.model.value(obs)
 
-    @tf.function
+    @tf.function#(jit_compile=True)
     def train(self, obs, rewards, raw_actions, values, orig_mu, orig_L):
         advs = rewards - values
         #normalizing advantages:
@@ -79,17 +80,17 @@ def neglogp(action, mu, L):
     vec_diff = tf.expand_dims(action - mu, -1)
 
     y = tf.linalg.triangular_solve(L, vec_diff)
-    vec_diff_ = tf.linalg.matvec(L, tf.squeeze(y, axis = -1))
-    good_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-5)
+    # vec_diff_ = tf.linalg.matvec(L, tf.squeeze(y, axis = -1))
+#    good_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-5)
 
-    ok_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-2)
-    if not ok_L:
-        tf.print('severe numerical issues')
-    elif not good_L:
-        tf.print('numerical issues')
-    any_good_L = tf.reduce_any(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-8)
-    if not any_good_L:
-        tf.print('no valid covariance matrices, updating weights impossible')
+ #   ok_L = tf.reduce_all(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-2)
+  #  if not ok_L:
+   #     tf.print('severe numerical issues')
+   # elif not good_L:
+   #     tf.print('numerical issues')
+   # any_good_L = tf.reduce_any(tf.abs(tf.squeeze(vec_diff) - vec_diff_) < 1e-8)
+   # if not any_good_L:
+   #     tf.print('no valid covariance matrices, updating weights impossible')
     
     x = tf.linalg.triangular_solve(tf.linalg.matrix_transpose(L), y, lower = False)
     
@@ -101,7 +102,7 @@ def neglogp(action, mu, L):
     # tf.debugging.assert_all_finite(const, 'const not finite')
     scale = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1)
     # print(scale.shape)
-    tf.debugging.assert_all_finite(scale, 'scale not finite')
+    #tf.debugging.assert_all_finite(scale, 'scale not finite')
     neglogp = const + scale + tf.squeeze(diffs_to_scale)
     # tf.debugging.assert_all_finite(neglogp, 'what')
     n_corrupt = tf.reduce_sum(tf.cast(neglogp > 256,tf.int32))
@@ -113,7 +114,7 @@ def entropy(mu, L):
     ent = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1) + \
           0.5 * n * (1.0 + tf.math.log(tf.constant(2, dtype = tf.float64) * np.pi))
     # print(ent)
-    tf.debugging.assert_all_finite(ent, 'the hell??')
+    #tf.debugging.assert_all_finite(ent, 'the hell??')
     return ent
 
 def write_plot(fig, writer, step):
@@ -159,27 +160,21 @@ def learn(
     
     nenvs = env.num_envs
     train_metrics, eval_metrics, test_metrics = metrics
-    
-    #instantiating the A2c model object
-
+    #instantiating the A2c model, set correct optimizer step
     model = A2CModel(env, network, lr_func, vf_coef, ent_coef, max_grad_norm, alpha, epsilon)
     set_optimizer_iter(env, model, model.optimizer, init_step-1)
 
-    
-    # load_path = osp.expanduser(ckpt_path)
-    # ckpt = tf.train.Checkpoint(model = model.model, optimizer = model.optimizer)
-    # manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep = 10, keep_checkpoint_every_n_hours= 10 )
-    # if initial_ckpt == 'latest':
-    #     ckpt.restore(manager.latest_checkpoint)
-    # elif initial_ckpt is not None:
-    #     ckpt.restore(initial_ckpt)
-
-    
+    #instantiate runners
     runner = Runner(env, model, steps_per_update, gamma)
-    
     val_runner = Runner(val_env, model, eval_steps, 0.0)
     
     
+    @tf.function#(jit_compile=True)
+    def train_batch():
+        obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
+        policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+        return policy_loss, value_loss, entropy, n_corrupt, rewards
+
     def validate(update):
         xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
         yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
@@ -223,48 +218,43 @@ def learn(
     
     
     t_start = time.time()
-    
-    n_updates = total_timesteps // (nenvs * steps_per_update)
+    n_updates = total_timesteps // (nenvs * steps_per_update) + 1
     if val_iterations > 0:
         val_updates = n_updates // val_iterations
     else: val_updates = 0
-
     accumulated_reward = 0.0
+
 
     for update in range(init_step, init_step + n_updates):
         if update == 11:
-            with tf.profiler.experimental.Trace('train', step_num = update):        
-                obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
-                policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+            with tf.profiler.experimental.Trace('train', step_num = update):
+                policy_loss, value_loss, entropy, n_corrupt, rewards = train_batch()
         elif update == 1 and writer is not None:
             tf.summary.trace_on(graph = True)
-            obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
-            with writer.as_default():
-                tf.summary.trace_export(name= "step_trace", step = 0,profiler_outdir=logdir)
-            tf.summary.trace_on(graph = True)
-            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
+            policy_loss, value_loss, entropy, n_corrupt, rewards = train_batch()
             with writer.as_default():
                 tf.summary.trace_export(name= "train_trace", step = 0,profiler_outdir=logdir)
-
         else:
-            obs, rewards, actions, raw_actions, values, mus, Ls = runner.run()
-            policy_loss, value_loss, entropy, n_corrupt = model.train(obs, rewards, raw_actions, values, mus, Ls)
-    
+            policy_loss, value_loss, entropy, n_corrupt, rewards = train_batch()    
+
         train_metrics['train_loss'].update_state(policy_loss + value_loss + entropy)
         train_metrics['train_pg_loss'].update_state(policy_loss)
         train_metrics['train_value_loss'].update_state(value_loss)
         train_metrics['train_ent'].update_state(entropy)
         train_metrics['train_rew'].update_state(rewards)
         
-        
+        #for first update, print nn summaries
         if update == 1:
             model.model.summary()
             model.model.get_layer('temporal_network').summary()
+            
+        #possibly print information about numerically unstable steps
         if n_corrupt > 0:
             print(f'{n_corrupt} action(s) corrupt, for which no gradients propagated')
         nseconds = time.time() - t_start
         fps = int(((update - init_step) * nenvs * steps_per_update)/nseconds)
 
+        #intermittently write to logs/print training progress
         if  log_interval != 0 and update % log_interval == 0:
             if verbose:
                 print("current single env steps fps: {}".format(fps))
@@ -275,15 +265,17 @@ def learn(
                     [tf.summary.scalar(x, train_metrics[x].result(), step = update) for x in train_metrics]
                 [train_metrics[x].reset_state() for x in train_metrics]
 
+        #profile the 11th training step
         if update == 10:
             tf.profiler.experimental.start('logs/trader')
         if update == 11:
             tf.profiler.experimental.stop('logs/trader')
             
+        #evaluate model fitness
         if val_updates != 0 and update % val_updates == 0 and val_env is not None:
             accumulated_reward += validate(update)
                         
-    return model, accumulated_reward
+    return model, accumulated_reward, model.optimizer.variables()
 
 def set_optimizer_iter(env, model, optimizer, step):
     obs = env.current_time_step()
@@ -294,9 +286,6 @@ def set_optimizer_iter(env, model, optimizer, step):
     opt_vars = model.optimizer.get_weights()
     opt_vars[0] = np.array(step)
     model.optimizer.set_weights(opt_vars)
-    
-
-
 
 
 

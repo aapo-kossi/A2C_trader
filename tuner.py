@@ -24,7 +24,7 @@ except: IN_COLAB = False
 def make_lr_func(hp):
     def make_exp_decay(init_lr, decay_steps, hp):
         return ExponentialDecay(init_lr, decay_steps, 0.96)
-    def make_constant_lr(init_lr,_, hp):
+    def make_constant_lr(init_lr, hp):
         return init_lr
     def make_it_decay(init_lr, decay_steps, hp):
         return InverseTimeDecay(init_lr, decay_steps, 1.0)
@@ -82,13 +82,10 @@ class MyTuner(Tuner):
         self._display.on_trial_end(self.oracle.get_trial(trial.trial_id))
         self.save()
         if IN_COLAB:
-            # replace the log directories that can persist across multiple VM sessions with up-to-date versions
-            shutil.rmtree(f'/content/drive/mydrive/{self.project_name}', ignore_errors=True)
-            shutil.rmtree('/content/drive/mydrive/trader_tb_logs', ignore_errors=True)
-            shutil.copytree(self.project_name, f'/content/drive/mydrive/{self.project_name}') #dirs_exist_ok=True after colab updates to python 3.8
-            shutil.copytree('logs', '/content/drive/mydrive/trader_tb_logs')
+            # update the log directories that can persist across multiple VM sessions
+            shutil.copytree(self.project_name, '/content/drive/mydrive', dirs_exist_ok=True)
+            shutil.copytree('logs', '/content/drive/mydrive', dirs_exist_ok=True)
             
-                
     def run_trial(self, trial, datasets, verbose = False):
         hp = trial.hyperparameters
         
@@ -107,6 +104,7 @@ class MyTuner(Tuner):
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
             log_dir = f'logs/trader/{time}'
             hp.Fixed('logdir', log_dir)
+            my_trialid = hp.Fixed('mytrialid', time)
 
         writer = tf.summary.create_file_writer(log_dir)
 
@@ -152,7 +150,7 @@ class MyTuner(Tuner):
         
         steps_per_epoch = 500000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
-        updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch)
+        updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch) + 1
         init_epoch = hp['tuner/initial_epoch']
         last_epoch = hp['tuner/epochs']
         
@@ -160,6 +158,7 @@ class MyTuner(Tuner):
         #TODO: call a2c.learn with hparams
         for epoch in range(init_epoch, last_epoch):
             init_step = epoch * updates_per_epoch + 1
+            self.on_epoch_begin(trial, model, epoch, logs = None)
             trained_model, epoch_fitness = learn(
                   model,
                   train_env,
@@ -189,9 +188,8 @@ class MyTuner(Tuner):
                 hparams_api.hparams(hparams)
                 
             self.on_epoch_end(trial, model, epoch, logs = logs)
-            print(f'trained epoch {epoch} on trial {trial.trial_id}')
+            print(f'trained epoch {epoch} on trial {my_trialid}')
             
-
 
             
         

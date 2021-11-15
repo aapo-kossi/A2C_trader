@@ -162,9 +162,7 @@ class Arranger(tf.keras.layers.Layer):
         ochlv = inputs[2]
         shape = ochlv.shape
         closes = ochlv[... , self.close_idx]
-        condition = tf.not_equal(closes, self.nil)
-        ragged = tf.ragged.boolean_mask(closes, condition)
-        starts = ragged.to_tensor(default_value = 0, shape = (shape[:-1]))[... ,0]
+        starts = closes[... ,0]
         last_values = closes[... ,-1]
         performances = tf.math.divide_no_nan(last_values - starts, starts)
         
@@ -220,8 +218,8 @@ class Trader(tf.keras.Model):
         # tf.print(tf.reduce_min(p))
         # tf.print(tf.reduce_max(lb))
         # tf.print(tf.reduce_min(ub))
-        tf.debugging.assert_non_negative(e,'equity negative')
-        tf.debugging.assert_non_negative(c, 'capital negative')
+        #tf.debugging.assert_non_negative(e,'equity negative')
+        #tf.debugging.assert_non_negative(c, 'capital negative')
         #simple dense network for feature encoding of categorical data
         x = self.encoder(x)
         # tf.debugging.assert_all_finite(x, 'autoencoder output not finite')
@@ -236,8 +234,8 @@ class Trader(tf.keras.Model):
         y = self.dense_temporal(y)
         # tf.debugging.assert_all_finite(y, 'temporal net output not finite')
         #concatenates the different inputs and categorizes features across all stocks
-        tf.debugging.assert_all_finite(scaled_e, 'scaled equity not finite')
-        tf.debugging.assert_all_finite(scaled_p, 'scaled prices not finite')
+        #tf.debugging.assert_all_finite(scaled_e, 'scaled equity not finite')
+        #tf.debugging.assert_all_finite(scaled_p, 'scaled prices not finite')
         concat = tf.keras.layers.concatenate((x, scaled_e, y, scaled_p))
         # tf.debugging.assert_all_finite(concat, 'concat output not finite')
         main = self.common(concat)
@@ -258,8 +256,8 @@ class Trader(tf.keras.Model):
         L = L + L_epsilon
 
 
-        tf.debugging.assert_positive(c, message='negative capital')
-        tf.debugging.assert_non_negative(e,message='negative equity')
+        #tf.debugging.assert_positive(c, message='negative capital')
+        #tf.debugging.assert_non_negative(e,message='negative equity')
 
         # tf.debugging.assert_all_finite(L, 'got non finite L')
         
@@ -311,42 +309,30 @@ class Trader(tf.keras.Model):
         architecture = hp.Choice('temporal_nn_type', ['Conv1D', 'LSTM'], default = 'Conv1D')
         model = tf.keras.Sequential(name = 'temporal_network')
         input_len = hp.Int('input_days', min_value = 60, max_value = 120, step = 10, default = 80)#min_value= 10, max_value = 120, step = 10, default = 80)
-        conv_layers = hp.Int('conv_layers', min_value = 2, max_value = 5, default = 3)
- 
-        filters, kernel_size, padding = [],[],[]
-        max_kernel_size = 10
-        for n in range(5):
-            filters.append(hp.Int(f'conv{n}_filters', min_value = 16, max_value = 2**(n+6), step = 16, default = 2**(n+5)))
-            kernel_size.append(hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, default = 9 - n))
-            padding.append(hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'same'))
-            max_kernel_size  = max_kernel_size - 1
-        
-        postconv_layers = hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2)
-        postconv_units = []
-        
-        lstm_layers = hp.Int('lstm_layers', min_value = 1, max_value = 5, default = 4, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
-        lstm_units = []
-        for n in range(5):
-            lstm_units.append(hp.Int(f'lstm{n}_units', min_value = 64, max_value = 256, step = 64, default = 128))
-            
-        for n in range(4):
-            postconv_units.append(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 512, step = 32, default = 256 // 2**n))
- 
         if architecture == 'Conv1D':
             input_len_tracker = input_len
-            for n in range(conv_layers):
+            max_kernel_size = 10
+            for n in range(hp.Int('conv_layers', min_value = 2, max_value = 5, default = 3)):
                 print(f'convolutional layer {n} input length {input_len_tracker}')
-                if input_len_tracker < max_kernel_size + 5: break
-                model.add(Conv1D(filters[n], kernel_size[n], padding='same', activation = swish))
-                model.add(Conv1D(filters[n], kernel_size[n], padding=padding[n], activation = swish))
-                model.add(MaxPool2D(pool_size=(1,2),strides = (1,2)))
-                if padding[n] == 'same':
-                    input_len_tracker = input_len // 2
-                else:
-                    input_len_tracker = (input_len_tracker - kernel_size[n] + 1) // 2
+                if input_len_tracker < max_kernel_size + 5: raise Exception
+                with hp.conditional_scope('conv_layers', list(range(n, 6))):
+                    filters = hp.Int(f'conv{n}_filters', min_value = 16, max_value = 2**(n+6), step = 16, default = 2**(n+5))
+                    kernel_size = hp.Int(f'conv{n}_kernel_size', min_value = 2, max_value = max_kernel_size, default = 9 - n)
+                    padding = hp.Choice(f'conv{n}_padding', ['valid','same'], default = 'same')
+                    model.add(Conv1D(filters, kernel_size, padding='same', activation = swish))
+                    model.add(Conv1D(filters, kernel_size, padding=padding, activation = swish))
+                    model.add(MaxPool2D(pool_size=(1,2),strides = (1,2)))
+                    max_kernel_size  = max_kernel_size - 1
+                    if padding == 'same':
+                        input_len_tracker = input_len // 2
+                    else:
+                        input_len_tracker = (input_len_tracker - kernel_size + 1) // 2
+
+                        
+                    
             model.add(tf.keras.layers.Flatten())
-            for n in range(postconv_layers):
-                model.add(Dense(postconv_units[n], activation = swish))
+            for n in range(hp.Int('postconv_fc_layers', min_value = 0, max_value = 4, default = 2, parent_name = 'temporal_nn_type', parent_values = ['Conv1D'])):
+                model.add(Dense(hp.Int(f'postconv{n}_units', min_value = 32, max_value = 512, step = 32, default = 256 // 2**n, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), activation = swish))
                 # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3, parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
 
         else:
@@ -354,11 +340,25 @@ class Trader(tf.keras.Model):
             #flatten channels and stocks
             model.add(Lambda(lambda x: tf.transpose(x, [0,2,1,3])))
             model.add(Lambda(lambda x: tf.reshape(x, tuple(tf.unstack(tf.shape(x)[:-2])) + (-1,))))
-            for n in range(lstm_layers-1):
-                model.add(LSTM(lstm_units[n], return_sequences = True, name = f'temporal_{n}'))
-            final_units = lstm_units[-1]
+            for n in range(hp.Int('lstm_layers', min_value = 1, max_value = 4, default = 3, parent_name = 'temporal_nn_type', parent_values = ['LSTM']) - 1):
+                units = hp.Int(f'lstm{n}_units', min_value = 256, max_value = 256, step = 64, default = 128, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
+                print(units)
+                model.add(LSTM(units, return_sequences = True, name = f'temporal_{n}'))
+            final_units = hp.Int('last_lstm_units', min_value = 128, max_value = 256, step = 64, default = 128, parent_name = 'temporal_nn_type', parent_values = ['LSTM'])
             model.add(LSTM(final_units, name = 'last_temporal'))
-            
+
+        # model.add(Conv1D(32, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(Conv1D(64, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(Conv1D(128, 5, activation = swish))
+        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
+        # model.add(tf.keras.layers.Flatten())
+        # model.add(Dense(128, activation = swish))
+        # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
+        # model.add(Dense(100, activation = swish))
+        # model.add(deterministic_dropout(hp.Choice('p_drop2', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
+        # model.add(Dense(64, activation = swish))
         return model
     
     @staticmethod

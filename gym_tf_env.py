@@ -27,11 +27,13 @@ class TradingEnv:
                  MAR = None,
                  render = False,
                  input_days = constants.INPUT_DAYS):
-        
+
         self.init_capital = tf.cast(init_capital, tf.float64)
-        self.window_data_index = tf.constant(data_index.to_numpy())
+        window_data_index = tf.constant(data_index.to_numpy())
         self.date_col = data_index.get_loc('date')
-        self.data_index = drop_col(self.window_data_index, self.date_col)
+        self.data_index = drop_col(window_data_index, self.date_col)
+        self.divkey = tf.squeeze(tf.where(self.data_index=='dist'))
+        self.closekey = tf.squeeze(tf.where(self.data_index=='prccd'))
         self.data_rows = self.data_index.shape[0]
         self.sector_cats = tf.constant(sector_cats)
         self.n_secs = self.sector_cats.shape[0]
@@ -47,7 +49,7 @@ class TradingEnv:
         self.cost_per_share = tf.constant(cost_per_share, dtype = tf.float64)
         self.cost_percentage = cost_percentage
         self.cost_minimum = cost_minimum
-        
+
         self.num_envs = n_envs
         self.n_symbols = train_windows.element_spec[0].shape[1]
         self.window = iter(train_windows.batch(self.num_envs, drop_remainder=True).prefetch(tf.data.AUTOTUNE))
@@ -55,16 +57,16 @@ class TradingEnv:
         self.capital = tf.Variable(tf.ones((n_envs, 1), dtype=tf.float64) * init_capital)
         self.equity = tf.Variable(tf.zeros([n_envs, self.n_symbols], dtype = tf.float64))
         self.returns = tf.Variable(tf.zeros(n_envs))
-        self.n_step = tf.Variable(tf.zeros(n_envs, dtype = tf.int32))
+        self.n_step = tf.Variable(tf.zeros(n_envs, dtype = tf.int64))
         self.day = tf.Variable(self.n_step + self.input_days)
         self.one = tf.ones_like(self.n_step)
-        
+
         # this is a workaround to missing fancy indexing in tensorflow:
-        batch_ranges = tf.repeat(tf.expand_dims(tf.range(0,self.num_envs),1),self.input_days,-1)
-        length_ranges = - tf.reverse(tf.repeat(tf.expand_dims(tf.range(0,self.input_days),0),self.num_envs,0),[1])
+        batch_ranges = tf.repeat(tf.expand_dims(tf.range(0,self.num_envs, dtype=tf.int64),1),self.input_days,-1)
+        length_ranges = - tf.reverse(tf.repeat(tf.expand_dims(tf.range(0,self.input_days, dtype=tf.int64),0),self.num_envs,0),[1])
         self.pre_index = tf.stack((batch_ranges, length_ranges),axis = -1)
         # then indices is pre_index + day when day has been padded to a broadcastable shape
-        
+
         init_ohlcvd = tf.zeros((n_envs,) + train_windows.element_spec[0].shape[:-1] + (train_windows.element_spec[0].shape[-1] - 1,), dtype=tf.float64)
         self.ohlcvd = tf.Variable(initial_value=init_ohlcvd)
         init_conames = tf.fill((self.num_envs,self.n_symbols), '')
@@ -75,10 +77,10 @@ class TradingEnv:
         self.dates = tf.Variable(initial_value = init_dates)
         self.reset()
         self.obs_shape = [x.shape for x in self.current_time_step()]
-        
 
-    
-    
+
+
+
     def current_time_step(self):
         """
         return obs as a list of tensors:
@@ -91,7 +93,6 @@ class TradingEnv:
         onehots = self.onehot_secs
         equity = self.equity
         ohlcvd = tf.gather_nd(self.ohlcvd, self.get_broadcastable_day() + self.pre_index)
-        # ohlcvd = tf.stack([self.ohlcvd[i,self.day[i] - self.input_days:self.day[i]] for i in range(self.num_envs)])
         ohlcvd = tf.transpose(ohlcvd, perm = [0,2,1,3])
         ohlcvd = tf.ensure_shape(ohlcvd, [self.num_envs, self.n_symbols, self.input_days, self.data_rows])
         lasts = self.get_lasts()
@@ -102,13 +103,13 @@ class TradingEnv:
         # tf.print(tf.math.reduce_any(tf.math.is_nan(lasts)))
         # tf.print(tf.math.reduce_any(tf.math.is_nan(capital)))
         return [ tf.convert_to_tensor(ob, dtype=tf.float64) for ob in [onehots, equity, ohlcvd, lasts, capital]]
-    
+
     # @tf.function
     def reset(self):
         trues = tf.fill([self.num_envs], True)
         self._reset(trues)
         return
-    
+
     def _reset(self, dones):
         index = tf.where(dones)
         n_dones = tf.size(index)
@@ -122,7 +123,7 @@ class TradingEnv:
         self.conames.scatter_nd_update(index, new_conames)
         sec_index = tf.cast(new_secs / 5 - 1,tf.uint8)   #mapping from GICS sector (0,10,15,20... to index -1,1,2,3...)
         new_secs = tf.one_hot(sec_index, self.n_secs, axis = 1, dtype=tf.float64)[:,1:,:] #drop the first column as it is always empty (corresponds to GICS sector 5, which doesn't exist)
-        new_dates = new_ohlcvd[:,:,0,tf.squeeze(tf.where(self.window_data_index == 'date'))]
+        new_dates = new_ohlcvd[:,:,0,self.date_col]
         self.dates.scatter_nd_update(index, new_dates)
         self.onehot_secs.scatter_nd_update(index, new_secs)
         new_ohlcvd = drop_col(new_ohlcvd, self.date_col)
@@ -133,34 +134,33 @@ class TradingEnv:
         self.capital.scatter_nd_update(index, new_capital)
         new_equity = tf.zeros([n_dones, self.n_symbols], dtype = tf.float64)
         self.equity.scatter_nd_update(index, new_equity)
-        new_step = tf.zeros([n_dones], dtype = tf.int32)
+        new_step = tf.zeros([n_dones], dtype = tf.int64)
         self.n_step.scatter_nd_update(index, new_step)
         new_day = new_step + self.input_days
         self.day.scatter_nd_update(index, new_day)
         # self.advance_to_wday()
         return
-        
+
     #faster performance step function
     #already wrapped in tf.function by Runner
-    # @tf.function
+#    @tf.function(jit_compile=True)
     def step(self, action):
-        tf.debugging.assert_all_finite(action, 'action not finite...')
+        #tf.debugging.assert_all_finite(action, 'action not finite...')
         #TODO: penalties not implemented and not a priority
         orig_mkt_value = self.get_mkt_val()
-        orig_capital = tf.convert_to_tensor(self.capital, dtype = tf.float64)
         lasts = self.get_lasts()
         divs = self.get_div()
 
         a = round_toward_0(action)
         a = clip_selling(a, self.equity)
         e = self.equity
-        tf.debugging.assert_non_negative(e + a, message = 'selling more than available')
+        #tf.debugging.assert_non_negative(e + a, message = 'selling more than available')
 
         commissions = self.get_commission(lasts, a)
 
         self.capital.assign_add(tf.reduce_sum(- a * lasts + e * divs, axis = 1, keepdims=True) - commissions, read_value=False)
         self.equity.assign_add(a, read_value=False)
-        tf.debugging.assert_non_negative(self.equity, f'negative equity {self.equity}')
+        #tf.debugging.assert_non_negative(self.equity, f'negative equity {self.equity}')
 
         self.day.assign_add(self.one)
         self.n_step.assign_add(self.one)
@@ -170,34 +170,34 @@ class TradingEnv:
         to_reset = tf.math.logical_or(dones, on_margin)
 
         rewards = self.get_rewards(orig_mkt_value, tf.cast(on_margin, tf.float64))
-        if tf.reduce_max(rewards) > 1000.0:
-            tf.print('rewards:')
-            tf.print(rewards, summarize = -1)
-            tf.print('orig lasts:')
-            tf.print(lasts, summarize = -1)
-            tf.print('lasts:')
-            tf.print(self.get_lasts(), summarize = -1)
-            tf.print('actions:')
-            tf.print(a, summarize = -1)
-            tf.print('commissions:')
-            tf.print(commissions, summarize = -1)
-            tf.print('dividends:')
-            tf.print(e * divs, summarize = -1)
-            tf.print('equity:')
-            tf.print(self.equity, summarize = -1)
-            tf.print('capital:')
-            tf.print(self.capital, summarize = -1)
-            tf.print('pre-step capital:')
-            tf.print(orig_capital, summarize = -1)
-            tf.print('mkt_value:')
-            tf.print(self.get_mkt_val(), summarize = -1)
-            tf.print('original mkt_value:')
-            tf.print(orig_mkt_value, summarize = -1)
-            tf.debugging.assert_less(tf.reduce_max(rewards), tf.cast(1000.0, tf.float64))            
+        #if tf.reduce_max(rewards) > 1000.0:
+        #    tf.print('rewards:')
+        #    tf.print(rewards, summarize = -1)
+        #    tf.print('orig lasts:')
+        ##    tf.print(lasts, summarize = -1)
+        #   tf.print('lasts:')
+        #   tf.print(self.get_lasts(), summarize = -1)
+        ##   tf.print('actions:')
+        #  tf.print(a, summarize = -1)
+        #  tf.print('commissions:')
+        ##  tf.print(commissions, summarize = -1)
+        # tf.print('dividends:')
+        # tf.print(e * divs, summarize = -1)
+        # tf.print('equity:')
+        # tf.print(self.equity, summarize = -1)
+        # tf.print('capital:')
+        # tf.print(self.capital, summarize = -1)
+        # tf.print('pre-step capital:')
+        # tf.print(orig_capital, summarize = -1)
+        # tf.print('mkt_value:')
+        # tf.print(self.get_mkt_val(), summarize = -1)
+        # tf.print('original mkt_value:')
+        # tf.print(orig_mkt_value, summarize = -1)
+        #tf.debugging.assert_less(tf.reduce_max(rewards), tf.cast(1000.0, tf.float64))
 
         if tf.reduce_any(to_reset): self._reset(to_reset)
         return self.current_time_step(), rewards, to_reset
-        
+
     def render(self):
         """
         
@@ -205,19 +205,19 @@ class TradingEnv:
 
         """
         pass
-    
+
 
     def close(self):
         print(f'closed environment {self.__name__}')
         del self
         return
-    
+
     def get_rewards(self, last_mkt_val, on_margin):
         profit = self.get_mkt_val() - last_mkt_val
         returns = profit / last_mkt_val * 100
         rewards = returns - 3.0 * on_margin
         return rewards
-    
+
     # def advance_to_wday(self):
     #     def get_cond():
     #         not_finished = self.day < self.total_days
@@ -225,7 +225,7 @@ class TradingEnv:
     #     while tf.reduce_any(get_cond()):
     #         self.day.assign_add(tf.where(get_cond(),1,0))
     #     return
-        
+
     def get_commission(self, last, action):
         n_traded = tf.math.abs(action)
         traded = tf.cast(action != 0.0, tf.float64)
@@ -236,34 +236,33 @@ class TradingEnv:
         commission = tf.math.maximum(commission, min_commission)
         commission = tf.math.reduce_sum(commission, axis = 1, keepdims=True)
         return commission
-    
+
     def get_mkt_val(self):
         return tf.squeeze(self.capital + tf.reduce_sum(self.equity * self.get_lasts(), axis = 1, keepdims=True), axis = -1)
-    
+
     def get_lasts(self):
-        lasts_key = tf.constant('prccd')
-        return self.get_current_val(lasts_key)
-        
+        return self.get_current_val(self.closekey)
+
     def get_div(self):
-        div_key = tf.constant('dist')
-        return self.get_current_val(div_key)
-    
+        return self.get_current_val(self.divkey)
+
     # def market_closed(self):
     #     vol_key = tf.constant('cshtrd')
     #     vols = self.get_current_val(vol_key)
     #     closed = tf.reduce_all(vols == 0.0, axis = 1)
     #     return closed
-        
-    def get_current_val(self, feature):
+
+    def get_current_val(self, key):
         # today =  tf.stack([self.ohlcvd[i,self.day[i] - 1] for i in range(self.num_envs)])
         today = tf.gather(self.ohlcvd, self.day - 1, batch_dims=1)
-        index = tf.squeeze(tf.where(self.data_index == feature))
-        todays_val = today[...,index]
+        todays_val = today[...,key]
         return todays_val
-    
+
     def get_broadcastable_day(self):
-        return tf.expand_dims(tf.pad(tf.expand_dims(self.day,-1),[[0,0],[1,0]]),1)
-    
+        expanded = tf.expand_dims(self.day,-1)
+        return tf.expand_dims(tf.concat((tf.zeros_like(expanded),expanded),1),1)
+        # return tf.expand_dims(tf.pad(tf.expand_dims(self.day,-1),[[0,0],[1,0]]),1)
+
     def add_noise(self, ohlcvd):
         # price_keys = ['open', 'high', 'low', 'close']
         # price_i = tf.squeeze(tf.stack([tf.where(self.data_index == key) for key in price_keys]), axis=1)
@@ -282,7 +281,7 @@ class TradingEnv:
         #     def false_fn():
         #         return elem
         #     return tf.cond(elem > 0.0, true_fn, false_fn)
-        
+
         mu = ohlcvd
         std = mu * ratio
         noisy = N(mu, scale_diag = std).sample()
@@ -302,10 +301,15 @@ class TradingEnv:
     
     
 def drop_col(tensor, col):
-    before = tensor[...,:col]
-    after = tensor[...,col + 1:]
-    dropped = tf.concat([before, after],-1)
-    return dropped
+    if col==0:
+        return tensor[...,1:]
+    else:
+        before = tensor[...,:col]
+        after = tensor[...,col+1:]
+        kept = tf.concat((before,after),-1)
+        #cols = tf.unstack(tensor,axis=-1)
+        #kept = tf.stack(cols[:col] + cols[col+1:],-1)
+        return kept
 
 def clip_selling(action, equity):
     return tf.where(action < 0, tf.math.maximum(action, - equity), action)
@@ -313,5 +317,9 @@ def clip_selling(action, equity):
 def round_toward_0(tensor):
     return tf.where(tensor < 0, tf.math.ceil(tensor), tf.math.floor(tensor))
     
+
+
     
-    
+
+
+

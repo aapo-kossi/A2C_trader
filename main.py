@@ -11,7 +11,10 @@ import keras_tuner as kt
 import argparse
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
+os.environ['TF_CLA_FLAGS'] = 'tf_xla_auto_jit=2 C:/Users/Aapo/python_projects/tf/workspace/A2C_trader/trader_optimization/main.py'
+tf.config.set_soft_device_placement(False)
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
@@ -87,7 +90,7 @@ def main():
     hp.Fixed('cost_minimum', constants.MIN_COST)
     hp.Fixed('steps_per_update', 16)
     
-    oracle = kt.oracles.Hyperband(kt.Objective('fitness','max'), max_epochs = 30, hyperparameters = hp)
+    oracle = kt.oracles.Hyperband(kt.Objective('fitness','max'), max_epochs = 50, hyperparameters = hp)
     
         
     tuner = MyTuner(oracle, hypermodel, summary_metrics = metrics, project_name = 'trader_optimization', n_stocks = constants.DEFAULT_TICKERS,
@@ -99,7 +102,7 @@ def main():
     
     tuner.search((train_ds, eval_ds, test_ds), verbose=verbose)
     
-    best_hparams = tuner.get_best_hyperparameters().values
+    best_hparams = tuner.get_best_hyperparameters()
     print(best_hparams)
 
     

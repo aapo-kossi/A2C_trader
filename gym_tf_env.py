@@ -69,8 +69,8 @@ class TradingEnv:
 
         init_ohlcvd = tf.zeros((n_envs,) + train_windows.element_spec[0].shape[:-1] + (train_windows.element_spec[0].shape[-1] - 1,), dtype=tf.float64)
         self.ohlcvd = tf.Variable(initial_value=init_ohlcvd)
-        init_conames = tf.fill((self.num_envs,self.n_symbols), '')
-        self.conames = tf.Variable(initial_value=init_conames)
+        init_conames = tf.zeros((self.num_envs,self.n_symbols), dtype=tf.int64)
+        self.conames = tf.Variable(initial_value=init_conames, dtype=tf.int64)
         init_onehot_sectors = tf.zeros((self.num_envs, self.n_secs - 1, self.n_symbols), dtype=tf.float64)
         self.onehot_secs = tf.Variable(initial_value=init_onehot_sectors)
         init_dates = tf.zeros((self.num_envs, self.total_days))

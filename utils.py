@@ -26,11 +26,13 @@ def load_processed_datasets(path, arrs, date_col):
     val = finish_ds(val, arrs[1], date_col,
                         window_l = constants.INPUT_DAYS + constants.VAL_STEPS,
                         n_envs = constants.N_VAL_ENVS, seed = 0)
+    val = val.map(hasher)
     
     test = prepare_ds(test, arrs[2], seed = 1)
     test = finish_ds(test, arrs[2], date_col,
                         window_l = constants.INPUT_DAYS + constants.TEST_STEPS,
                         n_envs = constants.N_TEST_ENVS, seed = 1)
+    test = test.map(hasher)
     
     return train, val, test
 
@@ -242,6 +244,11 @@ def setup_metrics():
                'test_pg_loss': test_pg_loss_metric,
                'test_loss': test_loss_metric,}
     return train_metrics, eval_metrics, test_metrics
+
+def hasher(*elems):
+    data, names, secs = elems
+    namehashes = tf.strings.to_hash_bucket_fast(names, 20000)
+    return data, namehashes, secs
 
 
 

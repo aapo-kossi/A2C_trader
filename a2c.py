@@ -39,7 +39,6 @@ class A2CModel:
     def value(self, obs):
         return self.model.value(obs)
 
-    @tf.function#(jit_compile=True)
     def train(self, obs, rewards, raw_actions, values, orig_mu, orig_L):
         advs = rewards - values
         #normalizing advantages:

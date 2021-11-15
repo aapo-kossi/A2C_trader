@@ -4,3 +4,4 @@
 *.snapshot
 /logs/*
 /trader_optimization/*
+*.zip

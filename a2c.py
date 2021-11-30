@@ -178,7 +178,7 @@ def learn(
         xplots = np.ceil(np.sqrt(val_env.num_envs)).astype(np.int32)
         yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
         fig, axs = plt.subplots(xplots, yplots)
-        obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.run(until_done=True, bootstrap=False)
+        obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.val_run(until_done=True, bootstrap=False)
         total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
         neglogpac, _ = neglogp(raw_actions, mus, Ls)
         advs = rewards - values
@@ -274,7 +274,7 @@ def learn(
         if val_updates != 0 and update % val_updates == 0 and val_env is not None:
             accumulated_reward += validate(update)
                         
-    return model, accumulated_reward, model.optimizer.variables()
+    return model, accumulated_reward
 
 def set_optimizer_iter(env, model, optimizer, step):
     obs = env.current_time_step()

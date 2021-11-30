@@ -24,7 +24,7 @@ except: IN_COLAB = False
 def make_lr_func(hp):
     def make_exp_decay(init_lr, decay_steps, hp):
         return ExponentialDecay(init_lr, decay_steps, 0.96)
-    def make_constant_lr(init_lr, hp):
+    def make_constant_lr(init_lr, hp, _):
         return init_lr
     def make_it_decay(init_lr, decay_steps, hp):
         return InverseTimeDecay(init_lr, decay_steps, 1.0)
@@ -148,7 +148,7 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 500000
+        steps_per_epoch = 1000000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch) + 1
         init_epoch = hp['tuner/initial_epoch']

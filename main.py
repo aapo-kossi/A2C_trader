@@ -9,11 +9,18 @@ Created on Mon Oct  5 21:30:53 2020
 import tensorflow as tf
 import keras_tuner as kt
 import argparse
+from gym_tf_env import TradingEnv
+from a2c import learn
+from tuner import MyTuner
+import utils
+import TradingModel
+import constants
+import sys
 
 import os
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
-os.environ['TF_CLA_FLAGS'] = 'tf_xla_auto_jit=2 C:/Users/Aapo/python_projects/tf/workspace/A2C_trader/trader_optimization/main.py'
+tf.config.optimizer.set_jit(True)
 tf.config.set_soft_device_placement(False)
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
@@ -25,18 +32,7 @@ if gpus:
 tf.keras.backend.set_floatx('float64')
 tf.random.set_seed(918278)
 
-from gym_tf_env import TradingEnv
-from a2c import learn
-from tuner import MyTuner
-import utils
-import TradingModel
-import constants
-import sys
-
-
-
 def main():
-    
     print('started')
     
     parser = argparse.ArgumentParser(description='Train a neural network to trade n stocks concurrently, '\
@@ -98,7 +94,8 @@ def main():
                     eval_arrs = eval_arrs, test_arrs = test_arrs,
                     # save_path = args.save_path,
                     data_index = data_index,
-                    verbose = verbose,) 
+                    verbose = verbose,
+                    tune_new_entries=False)
     
     tuner.search((train_ds, eval_ds, test_ds), verbose=verbose)
     

@@ -212,6 +212,7 @@ class TradingEnv:
         del self
         return
 
+    @tf.function(jit_compile=True)
     def get_rewards(self, last_mkt_val, on_margin):
         profit = self.get_mkt_val() - last_mkt_val
         returns = profit / last_mkt_val * 100
@@ -225,7 +226,7 @@ class TradingEnv:
     #     while tf.reduce_any(get_cond()):
     #         self.day.assign_add(tf.where(get_cond(),1,0))
     #     return
-
+    @tf.function(jit_compile=True)
     def get_commission(self, last, action):
         n_traded = tf.math.abs(action)
         traded = tf.cast(action != 0.0, tf.float64)
@@ -237,6 +238,7 @@ class TradingEnv:
         commission = tf.math.reduce_sum(commission, axis = 1, keepdims=True)
         return commission
 
+    @tf.function(jit_compile=True)
     def get_mkt_val(self):
         return tf.squeeze(self.capital + tf.reduce_sum(self.equity * self.get_lasts(), axis = 1, keepdims=True), axis = -1)
 
@@ -258,11 +260,13 @@ class TradingEnv:
         todays_val = today[...,key]
         return todays_val
 
+    @tf.function(jit_compile=True)
     def get_broadcastable_day(self):
         expanded = tf.expand_dims(self.day,-1)
         return tf.expand_dims(tf.concat((tf.zeros_like(expanded),expanded),1),1)
         # return tf.expand_dims(tf.pad(tf.expand_dims(self.day,-1),[[0,0],[1,0]]),1)
 
+    @tf.function(jit_compile=True)
     def add_noise(self, ohlcvd):
         # price_keys = ['open', 'high', 'low', 'close']
         # price_i = tf.squeeze(tf.stack([tf.where(self.data_index == key) for key in price_keys]), axis=1)

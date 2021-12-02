@@ -94,8 +94,7 @@ def main():
                     eval_arrs = eval_arrs, test_arrs = test_arrs,
                     # save_path = args.save_path,
                     data_index = data_index,
-                    verbose = verbose,
-                    tune_new_entries=False)
+                    verbose = verbose,)
     
     tuner.search((train_ds, eval_ds, test_ds), verbose=verbose)
     

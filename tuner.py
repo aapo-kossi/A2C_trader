@@ -31,7 +31,7 @@ def make_lr_func(hp):
     def make_cos_restarts_decay(init_lr, decay_steps, hp):
         return CosineDecayRestarts(init_lr, decay_steps, m_mul = hp.Float('cos_decay_m_mul', min_value = 1.0, max_value = 2.0, default = constants.M_MUL))
     
-    init_lr = hp.Float('init_lr', min_value = 1e-6, max_value = 5e-4, sampling = 'log', default = constants.INIT_LR)
+    init_lr = hp.Float('init_lr', min_value = 1e-6, max_value = 1e-3, sampling = 'log', default = constants.INIT_LR)
     decay_steps = hp.Float('it_decay_steps', min_value = 5e4, max_value = 1e6, sampling = 'log', default = constants.INIT_DECAY_STEPS)
     func_map = {'exp_decay': make_exp_decay, 'constant_lr': make_constant_lr, 'it_decay': make_it_decay, 'cos_restarts_decay': make_cos_restarts_decay}
     chosen_type = hp.Choice('lr_schedule_type', ['exp_decay', 'constant_lr', 'it_decay', 'cos_restarts_decay'], default = 'cos_restarts_decay')
@@ -102,7 +102,7 @@ class MyTuner(Tuner):
                 trial.status = 'INVALID'
                 return
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_dir = f'logs/trader/{time}'
+            log_dir = f'logs/trader_temp/{time}'
             hp.Fixed('logdir', log_dir)
             my_trialid = hp.Fixed('mytrialid', time)
 
@@ -115,7 +115,7 @@ class MyTuner(Tuner):
         train_ds, eval_ds, test_ds = datasets
         
         
-        n_batch = hp.Fixed('batch_size', value = 64)
+        n_batch = hp.Fixed('batch_size', value = 128)
         train_env = TradingEnv(train_ds, self.data_index,
                                self.sec_cats, (output_shape,),
                                n_envs = n_batch,
@@ -148,7 +148,7 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 1000000
+        steps_per_epoch = 15000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch) + 1
         init_epoch = hp['tuner/initial_epoch']

@@ -210,24 +210,24 @@ def get_enddate(folderpath):
     return npz['enddate']
 
 def setup_metrics():
-    train_loss_metric = tf.keras.metrics.Mean('train_loss', dtype = tf.float64)
-    train_pg_loss_metric = tf.keras.metrics.Mean('train_pg_loss', dtype = tf.float64)
-    train_val_loss_metric = tf.keras.metrics.Mean('train_value_loss', dtype = tf.float64)
-    train_ent_metric = tf.keras.metrics.Mean('train_ent', dtype = tf.float64)
-    train_reward_metric = tf.keras.metrics.Mean('train_reward', dtype = tf.float64)
+    train_loss_metric = tf.keras.metrics.Mean('train_loss', dtype = tf.float32)
+    train_pg_loss_metric = tf.keras.metrics.Mean('train_pg_loss', dtype = tf.float32)
+    train_val_loss_metric = tf.keras.metrics.Mean('train_value_loss', dtype = tf.float32)
+    train_ent_metric = tf.keras.metrics.Mean('train_ent', dtype = tf.float32)
+    train_reward_metric = tf.keras.metrics.Mean('train_reward', dtype = tf.float32)
 
-    eval_loss_metric = tf.keras.metrics.Mean('eval_loss', dtype = tf.float64)
-    eval_pg_loss_metric = tf.keras.metrics.Mean('eval_pg_loss', dtype = tf.float64)
-    eval_val_loss_metric = tf.keras.metrics.Mean('eval_value_loss', dtype = tf.float64)
-    eval_ent_metric = tf.keras.metrics.Mean('eval_ent', dtype = tf.float64)
-    eval_reward_metric = tf.keras.metrics.Mean('eval_reward', dtype = tf.float64)
+    eval_loss_metric = tf.keras.metrics.Mean('eval_loss', dtype = tf.float32)
+    eval_pg_loss_metric = tf.keras.metrics.Mean('eval_pg_loss', dtype = tf.float32)
+    eval_val_loss_metric = tf.keras.metrics.Mean('eval_value_loss', dtype = tf.float32)
+    eval_ent_metric = tf.keras.metrics.Mean('eval_ent', dtype = tf.float32)
+    eval_reward_metric = tf.keras.metrics.Mean('eval_reward', dtype = tf.float32)
 
 
-    test_loss_metric = tf.keras.metrics.Mean('test_loss', dtype = tf.float64)
-    test_pg_loss_metric = tf.keras.metrics.Mean('test_pg_loss', dtype = tf.float64)
-    test_val_loss_metric = tf.keras.metrics.Mean('test_value_loss', dtype = tf.float64)
-    test_ent_metric = tf.keras.metrics.Mean('test_ent', dtype = tf.float64)
-    test_reward_metric = tf.keras.metrics.Mean('test_reward', dtype = tf.float64)
+    test_loss_metric = tf.keras.metrics.Mean('test_loss', dtype = tf.float32)
+    test_pg_loss_metric = tf.keras.metrics.Mean('test_pg_loss', dtype = tf.float32)
+    test_val_loss_metric = tf.keras.metrics.Mean('test_value_loss', dtype = tf.float32)
+    test_ent_metric = tf.keras.metrics.Mean('test_ent', dtype = tf.float32)
+    test_reward_metric = tf.keras.metrics.Mean('test_reward', dtype = tf.float32)
     train_metrics = {'train_rew': train_reward_metric,
                'train_ent': train_ent_metric,
                'train_value_loss': train_val_loss_metric,

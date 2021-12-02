@@ -28,7 +28,7 @@ class TradingEnv:
                  render = False,
                  input_days = constants.INPUT_DAYS):
 
-        self.init_capital = tf.cast(init_capital, tf.float64)
+        self.init_capital = tf.cast(init_capital, tf.float32)
         window_data_index = tf.constant(data_index.to_numpy())
         self.date_col = data_index.get_loc('date')
         self.data_index = drop_col(window_data_index, self.date_col)
@@ -46,7 +46,7 @@ class TradingEnv:
         self.MAR = MAR
         self.render = render
         self.pen_coef = tf.constant([nec_penalty, nes_penalty])
-        self.cost_per_share = tf.constant(cost_per_share, dtype = tf.float64)
+        self.cost_per_share = tf.constant(cost_per_share, dtype = tf.float32)
         self.cost_percentage = cost_percentage
         self.cost_minimum = cost_minimum
 
@@ -54,8 +54,8 @@ class TradingEnv:
         self.n_symbols = train_windows.element_spec[0].shape[1]
         self.window = iter(train_windows.batch(self.num_envs, drop_remainder=True).prefetch(tf.data.AUTOTUNE))
 
-        self.capital = tf.Variable(tf.ones((n_envs, 1), dtype=tf.float64) * init_capital)
-        self.equity = tf.Variable(tf.zeros([n_envs, self.n_symbols], dtype = tf.float64))
+        self.capital = tf.Variable(tf.ones((n_envs, 1), dtype=tf.float32) * init_capital)
+        self.equity = tf.Variable(tf.zeros([n_envs, self.n_symbols], dtype = tf.float32))
         self.returns = tf.Variable(tf.zeros(n_envs))
         self.n_step = tf.Variable(tf.zeros(n_envs, dtype = tf.int64))
         self.day = tf.Variable(self.n_step + self.input_days)
@@ -67,11 +67,11 @@ class TradingEnv:
         self.pre_index = tf.stack((batch_ranges, length_ranges),axis = -1)
         # then indices is pre_index + day when day has been padded to a broadcastable shape
 
-        init_ohlcvd = tf.zeros((n_envs,) + train_windows.element_spec[0].shape[:-1] + (train_windows.element_spec[0].shape[-1] - 1,), dtype=tf.float64)
+        init_ohlcvd = tf.zeros((n_envs,) + train_windows.element_spec[0].shape[:-1] + (train_windows.element_spec[0].shape[-1] - 1,), dtype=tf.float32)
         self.ohlcvd = tf.Variable(initial_value=init_ohlcvd)
         init_conames = tf.zeros((self.num_envs,self.n_symbols), dtype=tf.int64)
         self.conames = tf.Variable(initial_value=init_conames, dtype=tf.int64)
-        init_onehot_sectors = tf.zeros((self.num_envs, self.n_secs - 1, self.n_symbols), dtype=tf.float64)
+        init_onehot_sectors = tf.zeros((self.num_envs, self.n_secs - 1, self.n_symbols), dtype=tf.float32)
         self.onehot_secs = tf.Variable(initial_value=init_onehot_sectors)
         init_dates = tf.zeros((self.num_envs, self.total_days))
         self.dates = tf.Variable(initial_value = init_dates)
@@ -102,7 +102,7 @@ class TradingEnv:
         # tf.print(tf.math.reduce_any(tf.math.is_nan(ohlcvd)))
         # tf.print(tf.math.reduce_any(tf.math.is_nan(lasts)))
         # tf.print(tf.math.reduce_any(tf.math.is_nan(capital)))
-        return [ tf.convert_to_tensor(ob, dtype=tf.float64) for ob in [onehots, equity, ohlcvd, lasts, capital]]
+        return [ tf.convert_to_tensor(ob, dtype=tf.float32) for ob in [onehots, equity, ohlcvd, lasts, capital]]
 
     # @tf.function
     def reset(self):
@@ -122,17 +122,17 @@ class TradingEnv:
         new_secs = new_secs[:n_dones]
         self.conames.scatter_nd_update(index, new_conames)
         sec_index = tf.cast(new_secs / 5 - 1,tf.uint8)   #mapping from GICS sector (0,10,15,20... to index -1,1,2,3...)
-        new_secs = tf.one_hot(sec_index, self.n_secs, axis = 1, dtype=tf.float64)[:,1:,:] #drop the first column as it is always empty (corresponds to GICS sector 5, which doesn't exist)
+        new_secs = tf.one_hot(sec_index, self.n_secs, axis = 1, dtype=tf.float32)[:,1:,:] #drop the first column as it is always empty (corresponds to GICS sector 5, which doesn't exist)
         new_dates = new_ohlcvd[:,:,0,self.date_col]
         self.dates.scatter_nd_update(index, new_dates)
         self.onehot_secs.scatter_nd_update(index, new_secs)
         new_ohlcvd = drop_col(new_ohlcvd, self.date_col)
         if self.noisy:
             new_ohlcvd = self.add_noise(new_ohlcvd)
-        self.ohlcvd.scatter_nd_update(index, tf.cast(new_ohlcvd,tf.float64))
+        self.ohlcvd.scatter_nd_update(index, tf.cast(new_ohlcvd,tf.float32))
         new_capital = tf.fill([n_dones,1], self.init_capital)
         self.capital.scatter_nd_update(index, new_capital)
-        new_equity = tf.zeros([n_dones, self.n_symbols], dtype = tf.float64)
+        new_equity = tf.zeros([n_dones, self.n_symbols], dtype = tf.float32)
         self.equity.scatter_nd_update(index, new_equity)
         new_step = tf.zeros([n_dones], dtype = tf.int64)
         self.n_step.scatter_nd_update(index, new_step)
@@ -169,7 +169,7 @@ class TradingEnv:
         on_margin = tf.squeeze(self.capital < 0.0)
         to_reset = tf.math.logical_or(dones, on_margin)
 
-        rewards = self.get_rewards(orig_mkt_value, tf.cast(on_margin, tf.float64))
+        rewards = self.get_rewards(orig_mkt_value, tf.cast(on_margin, tf.float32))
         #if tf.reduce_max(rewards) > 1000.0:
         #    tf.print('rewards:')
         #    tf.print(rewards, summarize = -1)
@@ -193,7 +193,7 @@ class TradingEnv:
         # tf.print(self.get_mkt_val(), summarize = -1)
         # tf.print('original mkt_value:')
         # tf.print(orig_mkt_value, summarize = -1)
-        #tf.debugging.assert_less(tf.reduce_max(rewards), tf.cast(1000.0, tf.float64))
+        #tf.debugging.assert_less(tf.reduce_max(rewards), tf.cast(1000.0, tf.float32))
 
         if tf.reduce_any(to_reset): self._reset(to_reset)
         return self.current_time_step(), rewards, to_reset
@@ -227,7 +227,7 @@ class TradingEnv:
     #     return
     def get_commission(self, last, action):
         n_traded = tf.math.abs(action)
-        traded = tf.cast(action != 0.0, tf.float64)
+        traded = tf.cast(action != 0.0, tf.float32)
         min_commission = traded * self.cost_minimum
         p_commission = n_traded * last * self.cost_percentage
         vol_commission = n_traded * self.cost_per_share

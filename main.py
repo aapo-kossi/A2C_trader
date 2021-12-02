@@ -29,7 +29,7 @@ if gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
     except RuntimeError as e:
         print(e)
-tf.keras.backend.set_floatx('float64')
+tf.keras.backend.set_floatx('float32')
 tf.random.set_seed(918278)
 
 def main():

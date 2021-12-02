@@ -74,7 +74,7 @@ class A2CModel:
         return tf.reduce_mean(entropies) * self.ent_c
     
 def neglogp(action, mu, L):
-    n = tf.cast(action.shape[-1], tf.float64)
+    n = tf.cast(action.shape[-1], tf.float32)
 
     vec_diff = tf.expand_dims(action - mu, -1)
 
@@ -96,7 +96,7 @@ def neglogp(action, mu, L):
     diffs_to_scale = 0.5 * tf.linalg.matrix_transpose(vec_diff) @ x
     # print(diffs_to_scale.shape)
     # tf.debugging.assert_all_finite(diffs_to_scale, 'diffs not finite')
-    const = 0.5 * n * tf.math.log(tf.constant(2.0, dtype = tf.float64) * np.pi)
+    const = 0.5 * n * tf.math.log(tf.constant(2.0, dtype = tf.float32) * np.pi)
     # print(const.shape)
     # tf.debugging.assert_all_finite(const, 'const not finite')
     scale = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1)
@@ -109,9 +109,9 @@ def neglogp(action, mu, L):
     return neglogp, n_corrupt
 
 def entropy(mu, L):
-    n = tf.cast(mu.shape[-1], tf.float64)
+    n = tf.cast(mu.shape[-1], tf.float32)
     ent = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)), axis = -1) + \
-          0.5 * n * (1.0 + tf.math.log(tf.constant(2, dtype = tf.float64) * np.pi))
+          0.5 * n * (1.0 + tf.math.log(tf.constant(2, dtype = tf.float32) * np.pi))
     # print(ent)
     #tf.debugging.assert_all_finite(ent, 'the hell??')
     return ent
@@ -179,7 +179,7 @@ def learn(
         yplots = np.ceil(val_env.num_envs / xplots).astype(np.int32)
         fig, axs = plt.subplots(xplots, yplots)
         obs , rewards, actions, raw_actions, values, mus, Ls = val_runner.val_run(until_done=True, bootstrap=False)
-        total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float64)
+        total_rewards = tf.reduce_sum(rewards) / tf.cast(tf.size(rewards), tf.float32)
         neglogpac, _ = neglogp(raw_actions, mus, Ls)
         advs = rewards - values
         pg_loss = model.action_loss(neglogpac, advs)

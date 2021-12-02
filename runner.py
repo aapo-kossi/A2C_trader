@@ -20,21 +20,21 @@ class Runner:
         self.env = env
         self.model = model
         self.nsteps = nsteps
-        self.gamma = tf.constant(gamma, dtype=tf.float64)
+        self.gamma = tf.constant(gamma, dtype=tf.float32)
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
         
     def run(self, until_done = False, bootstrap = True):
         size = self.nsteps
         last_obs = self.env.current_time_step()
-        mb_obs = [tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), tf.TensorArray(tf.float64, size=size), ]
-        mb_rewards = tf.TensorArray(tf.float64, size=size+1)
-        mb_actions = tf.TensorArray(tf.float64, size=size)
-        mb_raw_actions = tf.TensorArray(tf.float64, size=size)
-        mb_values = tf.TensorArray(tf.float64, size=size)
+        mb_obs = [tf.TensorArray(tf.float32, size=size), tf.TensorArray(tf.float32, size=size), tf.TensorArray(tf.float32, size=size), tf.TensorArray(tf.float32, size=size), tf.TensorArray(tf.float32, size=size), ]
+        mb_rewards = tf.TensorArray(tf.float32, size=size+1)
+        mb_actions = tf.TensorArray(tf.float32, size=size)
+        mb_raw_actions = tf.TensorArray(tf.float32, size=size)
+        mb_values = tf.TensorArray(tf.float32, size=size)
         mb_dones = tf.TensorArray(tf.bool, size=size+1)
-        mb_mu = tf.TensorArray(tf.float64, size=size)
-        mb_L = tf.TensorArray(tf.float64, size=size)
+        mb_mu = tf.TensorArray(tf.float32, size=size)
+        mb_L = tf.TensorArray(tf.float32, size=size)
 
         #mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
 
@@ -113,16 +113,16 @@ class Runner:
     def val_run(self, until_done = False, bootstrap = True):
         size = self.nsteps
         last_obs = self.env.current_time_step()
-        mb_obs = [tf.TensorArray(tf.float64,size=0, dynamic_size=True), tf.TensorArray(tf.float64,size=0, dynamic_size=True),
-                  tf.TensorArray(tf.float64,size=0, dynamic_size=True), tf.TensorArray(tf.float64,size=0, dynamic_size=True),
-                  tf.TensorArray(tf.float64,size=0, dynamic_size=True), ]
-        mb_rewards = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
-        mb_actions = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
-        mb_raw_actions = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
-        mb_values = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
+        mb_obs = [tf.TensorArray(tf.float32,size=0, dynamic_size=True), tf.TensorArray(tf.float32,size=0, dynamic_size=True),
+                  tf.TensorArray(tf.float32,size=0, dynamic_size=True), tf.TensorArray(tf.float32,size=0, dynamic_size=True),
+                  tf.TensorArray(tf.float32,size=0, dynamic_size=True), ]
+        mb_rewards = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
+        mb_actions = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
+        mb_raw_actions = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
+        mb_values = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
         mb_dones = tf.TensorArray(tf.bool,size=0, dynamic_size=True)
-        mb_mu = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
-        mb_L = tf.TensorArray(tf.float64,size=0, dynamic_size=True)
+        mb_mu = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
+        mb_L = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
 
         # mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
 
@@ -217,9 +217,9 @@ def sf01(tensorarray):
     return tf.reshape(tf.transpose(tensor, perm), (s[0] * s[1],) + tuple(tf.unstack(s[2:])))
 
 def get_discounted_rewards(rewards, dones, gamma):
-    dones = tf.cast(dones, tf.float64)
-    one = tf.constant((1.,),dtype=tf.float64)
-    initializer = tf.zeros(rewards.shape[1], dtype = tf.float64)
+    dones = tf.cast(dones, tf.float32)
+    one = tf.constant((1.,),dtype=tf.float32)
+    initializer = tf.zeros(rewards.shape[1], dtype = tf.float32)
     discounted = tf.scan(
         lambda acc, rew_done: rew_done[0] + gamma * acc * (one - rew_done[1]),
         (rewards, dones),

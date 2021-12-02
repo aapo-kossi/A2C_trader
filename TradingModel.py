@@ -72,13 +72,13 @@ class Cholesky_from_z(tf.keras.layers.Layer):
 
     def accumulate_squared_L(self, z):
         signs = tf.math.sign(z)
-        signs = tf.where(signs == 0, tf.cast(1., tf.float64), signs)
+        signs = tf.where(signs == 0, tf.cast(1., tf.float32), signs)
         z_squared = z * z
         x_squared = tf.zeros_like(z)
 
         def iterate(j, x_squared):
             z_col = z_squared[..., j]
-            uppers = tf.zeros(tf.shape(z)[:-1], dtype=tf.float64)[..., :j]
+            uppers = tf.zeros(tf.shape(z)[:-1], dtype=tf.float32)[..., :j]
             diag = [1.] - tf.math.reduce_sum(x_squared[..., j], axis=-1, keepdims=True)
             lower = z_col[..., j + 1:] * (1. - tf.math.reduce_sum(x_squared[..., j + 1:, :], axis=-1))
             col = tf.transpose(tf.expand_dims(tf.concat((uppers, diag, lower), -1), -2), perm=[0, 2, 1])
@@ -91,10 +91,10 @@ class Cholesky_from_z(tf.keras.layers.Layer):
         return tf.sqrt(x_squared) * signs
 
     # def accumulate_L(self, z):
-    #     j_ta = tf.TensorArray(tf.float64, size =0, dynamic_size=True, element_shape= [self.size])
+    #     j_ta = tf.TensorArray(tf.float32, size =0, dynamic_size=True, element_shape= [self.size])
     #     for j in range(self.size):
     #         z_j = z[:,j]
-    #         uppers = tf.zeros(j, dtype = tf.float64)
+    #         uppers = tf.zeros(j, dtype = tf.float32)
     #         diag = tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j])
     #         diag = tf.expand_dims(diag, 0)
     #         lower = z_j[j+1:] * tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j+1:])
@@ -104,9 +104,9 @@ class Cholesky_from_z(tf.keras.layers.Layer):
 
     # def scan_accumulate_L(self, z):
     #     # tf.debugging.assert_all_finite(z, 'got non finite z')
-    #     initializer = (tf.zeros([self.size],dtype = tf.float64), tf.zeros([self.size],dtype = tf.float64))
+    #     initializer = (tf.zeros([self.size],dtype = tf.float32), tf.zeros([self.size],dtype = tf.float32))
     #     def scan_func(a, t):
-    #         uppers = tf.zeros(t[1], dtype = tf.float64)
+    #         uppers = tf.zeros(t[1], dtype = tf.float32)
     #         diag = tf.sqrt(1. - a[1])[t[1]]
     #         diag = tf.expand_dims(diag, 0)
     #         lower = t[0][t[1]+1:] * tf.sqrt(1. - a[1])[t[1]+1:]
@@ -117,7 +117,7 @@ class Cholesky_from_z(tf.keras.layers.Layer):
     #     Lt = tf.scan(scan_func, (tf.transpose(z), tf.range(self.size,dtype=tf.int32)), initializer=initializer, parallel_iterations=16, infer_shape=False)
     #     L = tf.transpose(Lt[0])
     #     L = tf.ensure_shape(L, [self.size,self.size])
-    #     tf.debugging.assert_near(tf.linalg.diag_part(tf.matmul(L,L,transpose_b=True)),tf.ones(self.size,dtype=tf.float64), message = f'{tf.linalg.diag_part(L)}')
+    #     tf.debugging.assert_near(tf.linalg.diag_part(tf.matmul(L,L,transpose_b=True)),tf.ones(self.size,dtype=tf.float32), message = f'{tf.linalg.diag_part(L)}')
     #     return L
 
 
@@ -148,7 +148,7 @@ class Buy_limiter(tf.keras.layers.Layer):
 class Arranger(tf.keras.layers.Layer):
     def __init__(self, close_idx):
         super(Arranger, self).__init__(trainable=False)
-        self.nil = tf.constant(0, dtype=tf.float64)
+        self.nil = tf.constant(0, dtype=tf.float32)
         self.close_idx = tf.constant(close_idx)
 
     def call(self, inputs):
@@ -206,7 +206,7 @@ class Trader(tf.keras.Model):
         # generating simplest bounds for action space
         # these are be used to scale the outputs of the policy network
 
-        # inputs = [tf.cast(x, tf.float64) for x in inputs]
+        # inputs = [tf.cast(x, tf.float32) for x in inputs]
 
         # [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
 
@@ -251,8 +251,8 @@ class Trader(tf.keras.Model):
         # tf.debugging.assert_all_finite(mu, 'action means not finite??')
         mu = self.convert_to_nshares((mu, p))
 
-        L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype=tf.float64), tf.linalg.diag(p)), L)
-        L_epsilon = tf.linalg.eye(mu.shape[-1], dtype=tf.float64) * constants.l_epsilon
+        L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype=tf.float32), tf.linalg.diag(p)), L)
+        L_epsilon = tf.linalg.eye(mu.shape[-1], dtype=tf.float32) * constants.l_epsilon
         L = L + L_epsilon
 
         # tf.debugging.assert_positive(c, message='negative capital')
@@ -349,7 +349,7 @@ class Trader(tf.keras.Model):
         if architecture == 'Conv1D':
             for n in range(conv_layers):
                 model.add(Conv1D(conv_filters[n], conv_kernel_sizes[n], padding=paddings[n], activation=swish))
-                model.add(MaxPool2D(pool_size=(1, 2), strides=(1, 2)))
+                if n == 0 or n == conv_layers - 1: model.add(MaxPool2D(pool_size=(1, 2), strides=(1, 2)))
 
             model.add(tf.keras.layers.Flatten())
             for n in range(postconv_layers):
@@ -471,7 +471,7 @@ class Trader(tf.keras.Model):
     @tf.custom_gradient
     def clip_by_value_reverse_gradient(inputs):
         # tf.debugging.assert_all_finite(inputs, 'unclipped z not finite??')
-        ub = tf.cast(constants.TANH_UB, tf.float64)
+        ub = tf.cast(constants.TANH_UB, tf.float32)
         out = tf.clip_by_value(inputs, -ub, ub)
 
         # tf.debugging.assert_all_finite(out, 'clipped z not finite??')

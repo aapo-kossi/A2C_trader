@@ -83,7 +83,7 @@ def main():
 
     oracle = kt.oracles.Hyperband(kt.Objective('fitness', 'max'), max_epochs=20, hyperparameters=hp)
 
-    tuner = MyTuner(oracle, hypermodel, summary_metrics=metrics, project_name='trader_optimization',
+    tuner = MyTuner(oracle, hypermodel, summary_metrics=metrics, project_name='trader_optimization_stable',
                     n_stocks=constants.DEFAULT_TICKERS,
                     sec_cats=sec_cats, train_arrs=train_arrs,
                     eval_arrs=eval_arrs, test_arrs=test_arrs,

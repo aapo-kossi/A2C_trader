@@ -102,7 +102,7 @@ class MyTuner(Tuner):
                 trial.status = 'INVALID'
                 return
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_dir = f'logs/trader/{time}'
+            log_dir = f'logs/trader_stable/{time}'
             hp.Fixed('logdir', log_dir)
 
         writer = tf.summary.create_file_writer(log_dir)

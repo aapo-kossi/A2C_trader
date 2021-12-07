@@ -101,7 +101,7 @@ class Buy_limiter(tf.keras.layers.Layer):
         1: the available cash
         2: equity prices
         
-        out: buying actions scaled so that (most) possible cash is expended
+        out: buying actions scaled so that not all capital is expended
         """
         pos_mask = inputs[0] > 0.0
         needed_capital = tf.reduce_sum(tf.where(pos_mask, inputs[0] * inputs[2], tf.zeros_like(inputs[0])), axis=1,
@@ -206,7 +206,7 @@ class Trader(tf.keras.Model):
         mu, L = self.actor((main, lb, ub))
         mu = self.convert_to_nshares((mu, p))
 
-        L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype=tf.float32), tf.linalg.diag(p)), L)
+        L = L * tf.linalg.diag(1/p)
         L_epsilon = tf.linalg.eye(mu.shape[-1], dtype=tf.float32) * constants.l_epsilon
         L = L + L_epsilon
 
@@ -392,7 +392,7 @@ class Trader(tf.keras.Model):
         # generate lower triangle scale matrix
         z_vec = Dense(num_outputs * (num_outputs - 1) / 2, activation='tanh', name='z_layer')(latest_hidden)
         z_vec_clipped = clip_z(z_vec)
-        std_vec = Dense(num_outputs, activation=swish, name='stdev_layer')(latest_hidden)
+        std_vec = Dense(num_outputs, activation='relu', name='stdev_layer')(latest_hidden)
         l_scale = hp.Float('std_scale', min_value=0.1, max_value=5., sampling='log', default=constants.l_scale)
         std_vec = tfp.math.clip_by_value_preserve_gradient(std_vec, 0.0, 1.0) * (ub - lb) * l_scale
 

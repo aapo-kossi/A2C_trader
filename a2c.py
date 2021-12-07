@@ -70,7 +70,15 @@ class A2CModel:
 
 
 def neglogp(action, mu, L):
+
     n = tf.cast(action.shape[-1], tf.float32)
+    if not constants.FULL_RANK_COVARIANCE:
+        std = tf.linalg.diag_part(L)
+        neglogp =  0.5 * tf.reduce_sum(tf.math.square((action - mu) / std), axis=-1) \
+                + 0.5 * tf.math.log(2.0 * np.pi) * n \
+                + tf.reduce_sum(tf.math.log(std), axis=-1)
+        n_corrupt = tf.reduce_sum(tf.cast(neglogp > 2.0**8,tf.int64))
+        return neglogp, n_corrupt
 
     vec_diff = tf.expand_dims(action - mu, -1)
 
@@ -83,7 +91,7 @@ def neglogp(action, mu, L):
 
     neglogp = const + scale + tf.squeeze(diffs_to_scale)
 
-    n_corrupt = tf.reduce_sum(tf.cast(neglogp > 2.0**8,tf.int32))
+    n_corrupt = tf.reduce_sum(tf.cast(neglogp > 2.0**8,tf.int64))
     neglogp = tf.clip_by_value(neglogp, - 2.0 ** 9, 2.0 ** 8)
     return neglogp, n_corrupt
 

@@ -20,7 +20,8 @@ class Runner:
         self.gamma = tf.constant(gamma, dtype=tf.float32)
         self.obs_shape = env.obs_shape
         self.action_space = (env.num_envs, ) + env.action_space
-        
+
+    # XLA-friendly run function, preferred when training
     def run(self, until_done = False, bootstrap = True):
         size = self.nsteps
         last_obs = self.env.current_time_step()
@@ -106,6 +107,7 @@ class Runner:
         bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_mu, mb_L]
         return bufs
 
+    # dynamic run function, used when validating the model. TODO: DRY
     def val_run(self, until_done = False, bootstrap = True):
         size = self.nsteps
         last_obs = self.env.current_time_step()

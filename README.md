@@ -1,12 +1,12 @@
 # A2C_trader
-deep neural network learning to trade a subset of the market
+Deep neural network learning to trade a subset of the market.
 
-
-Initialize training by running main.
-
-Has the option to save and read stock data you have previously written.
-Scrapes tickers from yahoo finance screener.
-
-The learning algorithm is A2C, implemented with some parts from OpenAI baselines at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
+The learning algorithm is A2C, implemented so that the complete steps involving experience generation and training are traced.
 We use a stochastic policy with the output of the network as the parameters of a multivariate normal distribution.
 The action space is bound so that the model will never be short shares or resort to buying on margin.
+
+built with:
+- tensorflow 2.7.0,
+- keras_tuner 1.0.4
+- numpy
+- pandas

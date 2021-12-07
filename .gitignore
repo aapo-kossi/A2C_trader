@@ -1,5 +1,7 @@
 *.pyc
 *.csv
-/logs
-/trader_optimization
 *.shard
+*.tfrecord
+/logs/*
+/trader_optimization/*
+*.zip

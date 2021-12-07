@@ -31,7 +31,7 @@ def make_lr_func(hp):
     def make_cos_restarts_decay(init_lr, decay_steps, hp):
         return CosineDecayRestarts(init_lr, decay_steps, m_mul = hp.Float('cos_decay_m_mul', min_value = 1.0, max_value = 2.0, default = constants.M_MUL))
     
-    init_lr = hp.Float('init_lr', min_value = 1e-6, max_value = 1e-3, sampling = 'log', default = constants.INIT_LR)
+    init_lr = hp.Float('init_lr', min_value = 5e-6, max_value = 1e-4, sampling = 'log', default = constants.INIT_LR)
     decay_steps = hp.Float('it_decay_steps', min_value = 5e4, max_value = 1e6, sampling = 'log', default = constants.INIT_DECAY_STEPS)
     func_map = {'exp_decay': make_exp_decay, 'constant_lr': make_constant_lr, 'it_decay': make_it_decay, 'cos_restarts_decay': make_cos_restarts_decay}
     chosen_type = hp.Choice('lr_schedule_type', ['exp_decay', 'constant_lr', 'it_decay', 'cos_restarts_decay'], default = 'cos_restarts_decay')
@@ -102,9 +102,8 @@ class MyTuner(Tuner):
                 trial.status = 'INVALID'
                 return
             time = datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_dir = f'logs/trader_temp/{time}'
+            log_dir = f'logs/trader/{time}'
             hp.Fixed('logdir', log_dir)
-            my_trialid = hp.Fixed('mytrialid', time)
 
         writer = tf.summary.create_file_writer(log_dir)
 
@@ -127,7 +126,6 @@ class MyTuner(Tuner):
                                cost_minimum= cost_minimum,
                                input_days = input_days)
 
-        #TODO: instantiate validation envs and model with hparams
         eval_env = TradingEnv(eval_ds, self.data_index,
                               self.sec_cats, (output_shape,),
                               n_envs = constants.N_VAL_ENVS,
@@ -148,17 +146,16 @@ class MyTuner(Tuner):
                               cost_minimum= cost_minimum,
                               input_days = input_days)
         
-        steps_per_epoch = 15000
+        steps_per_epoch = 5000000
         steps_per_update = hp.Int('steps_per_update', min_value = 8, max_value = 32, step = 8, default = constants.N_STEPS_UPDATE)
         updates_per_epoch = steps_per_epoch // (steps_per_update * n_batch) + 1
         init_epoch = hp['tuner/initial_epoch']
         last_epoch = hp['tuner/epochs']
         
         lr = make_lr_func(hp)
-        #TODO: call a2c.learn with hparams
+        epoch_logs = []
         for epoch in range(init_epoch, last_epoch):
             init_step = epoch * updates_per_epoch + 1
-            self.on_epoch_begin(trial, model, epoch, logs = None)
             trained_model, epoch_fitness = learn(
                   model,
                   train_env,
@@ -172,7 +169,7 @@ class MyTuner(Tuner):
                   init_step = init_step,
                   vf_coef = hp.Float('vf_coef', min_value = 0.2, max_value = 5.0, sampling = 'log', default = 1.0),
                   gamma= hp.Float('gamma', min_value = 0.0, max_value = 1.0, sampling = 'linear', default = constants.GAMMA),
-                  log_interval = 10,
+                  log_interval = 100,
                   val_iterations = 1,
                   metrics = self.summary_metrics,
                   writer = writer,
@@ -181,25 +178,11 @@ class MyTuner(Tuner):
                   )
             
             logs = {'fitness': epoch_fitness}
+            epoch_logs.append(logs)
             hparams = convert_hyperparams_to_hparams(hp)
             
             with writer.as_default():
                 tf.summary.scalar('fitness', epoch_fitness, step = epoch)
                 hparams_api.hparams(hparams)
-                
-            self.on_epoch_end(trial, model, epoch, logs = logs)
-            print(f'trained epoch {epoch} on trial {my_trialid}')
-            
 
-            
-        
-        #this is gonna be fucking awesome on colab GPU
-        
-        
-        
-        
-        
-        
-        
-        
-        
+        return logs

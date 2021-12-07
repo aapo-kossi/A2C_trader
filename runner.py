@@ -10,10 +10,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-# from tensorflow_probability.python.distributions import MultivariateNormalTriL as MVN        
 
-
-#runner class and helper functions sf01 and get_discounted_rewards modified from OpenAI baselines A2C implementation at https://github.com/openai/baselines/blob/tf2/baselines/a2c/
 class Runner:
     def __init__(self, env, model, nsteps, gamma, training = True):
         self.training = training
@@ -36,7 +33,6 @@ class Runner:
         mb_mu = tf.TensorArray(tf.float32, size=size)
         mb_L = tf.TensorArray(tf.float32, size=size)
 
-        #mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
 
         bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L]
         n_step = 0
@@ -124,7 +120,6 @@ class Runner:
         mb_mu = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
         mb_L = tf.TensorArray(tf.float32,size=0, dynamic_size=True)
 
-        # mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L = [],[],[],[],[],[],[],[]
 
         bufs = [mb_obs, mb_rewards, mb_actions, mb_raw_actions, mb_values, mb_dones, mb_mu, mb_L]
         n_step = 0

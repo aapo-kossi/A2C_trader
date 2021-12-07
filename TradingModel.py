@@ -90,36 +90,6 @@ class Cholesky_from_z(tf.keras.layers.Layer):
             x_squared = iterate(j, x_squared)
         return tf.sqrt(x_squared) * signs
 
-    # def accumulate_L(self, z):
-    #     j_ta = tf.TensorArray(tf.float32, size =0, dynamic_size=True, element_shape= [self.size])
-    #     for j in range(self.size):
-    #         z_j = z[:,j]
-    #         uppers = tf.zeros(j, dtype = tf.float32)
-    #         diag = tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j])
-    #         diag = tf.expand_dims(diag, 0)
-    #         lower = z_j[j+1:] * tf.sqrt(1. - tf.math.reduce_sum(j_ta.stack() ** 2, axis = 0)[j+1:])
-    #         j_ta = j_ta.write(j,tf.concat((uppers, diag, lower), 0))
-    #     L = tf.transpose(j_ta.stack())
-    #     return L
-
-    # def scan_accumulate_L(self, z):
-    #     # tf.debugging.assert_all_finite(z, 'got non finite z')
-    #     initializer = (tf.zeros([self.size],dtype = tf.float32), tf.zeros([self.size],dtype = tf.float32))
-    #     def scan_func(a, t):
-    #         uppers = tf.zeros(t[1], dtype = tf.float32)
-    #         diag = tf.sqrt(1. - a[1])[t[1]]
-    #         diag = tf.expand_dims(diag, 0)
-    #         lower = t[0][t[1]+1:] * tf.sqrt(1. - a[1])[t[1]+1:]
-    #         col = tf.concat([uppers, diag, lower],0)
-    #         col = tf.ensure_shape(col, [self.size])
-    #         # col = tf.debugging.assert_all_finite(col, 'column of L not finite')
-    #         return col, a[1] + col ** 2
-    #     Lt = tf.scan(scan_func, (tf.transpose(z), tf.range(self.size,dtype=tf.int32)), initializer=initializer, parallel_iterations=16, infer_shape=False)
-    #     L = tf.transpose(Lt[0])
-    #     L = tf.ensure_shape(L, [self.size,self.size])
-    #     tf.debugging.assert_near(tf.linalg.diag_part(tf.matmul(L,L,transpose_b=True)),tf.ones(self.size,dtype=tf.float32), message = f'{tf.linalg.diag_part(L)}')
-    #     return L
-
 
 class Buy_limiter(tf.keras.layers.Layer):
     def __init__(self):
@@ -174,14 +144,16 @@ class Arranger(tf.keras.layers.Layer):
 
 class Trader(tf.keras.Model):
     """
-    inputs: 1st encoded categories, 2nd equity, 3rd stock data, 4th last prices, 5th current capital
+    inputs to call: 1st encoded categories, 2nd equity, 3rd stock data, 4th last prices, 5th current capital
     
     """
 
     def __init__(self, output_shape, hp, close_idx):
         """
-        inputs: 1, output shape of actor network, essentially n_stocks that is desirable to be traded
+        PARAMETERS: 1, output shape of actor network, essentially n_stocks that is desirable to be traded
                 2, hyperparameters for the model, which impact the model architecture and size
+                3, channel number for the daily close price in ohlcvd data
+        RETURNS: tf.keras.Model object
         """
         super(Trader, self).__init__()
 
@@ -190,7 +162,7 @@ class Trader(tf.keras.Model):
         self.normalizer = Lambda(self.normalize_features)
         self.flatten_features_and_days = Lambda(lambda x: tf.reshape(x, [x.shape[0], x.shape[1], -1]), trainable=False)
         self.encoder = self.make_mlp(hp)
-        self.dense_temporal = self.make_temporal_DNN(hp)
+        self.temporal = self.make_temporal_DNN(output_shape, hp)
         self.price_scaler = Lambda(lambda args: self.scale_prices(*args), trainable=False)
         self.equity_scaler = Lambda(lambda args: self.scale_equity(*args), trainable=False)
         self.common, common_out_shape = self.make_common_dense(output_shape, hp)
@@ -205,24 +177,14 @@ class Trader(tf.keras.Model):
 
         # generating simplest bounds for action space
         # these are be used to scale the outputs of the policy network
-
-        # inputs = [tf.cast(x, tf.float32) for x in inputs]
-
-        # [tf.debugging.check_numerics(x, f'input {n} not finite') for n, x in enumerate(inputs)]
-
         (x, e, y, p), orders = self.arrange(inputs[:4])
         c = inputs[4]
         lb = - tf.stack(p * e)
         ub = c
-        # tf.print(e, summarize = 160)
-        # tf.print(tf.reduce_min(p))
-        # tf.print(tf.reduce_max(lb))
-        # tf.print(tf.reduce_min(ub))
-        # tf.debugging.assert_non_negative(e,'equity negative')
-        # tf.debugging.assert_non_negative(c, 'capital negative')
+
         # simple dense network for feature encoding of categorical data
         x = self.encoder(x)
-        # tf.debugging.assert_all_finite(x, 'autoencoder output not finite')
+
         # rescaling current equity and stock prices for the main network
         scaled_p = self.price_scaler((p, c))
         scaled_e = self.equity_scaler([e, scaled_p])
@@ -230,16 +192,11 @@ class Trader(tf.keras.Model):
 
         # dense network for recognising temporal features, convolutional might be more effective
         y = self.normalizer((y, 2))
-        # y = self.flatten_features_and_days(y)
-        y = self.dense_temporal(y)
-        # tf.debugging.assert_all_finite(y, 'temporal net output not finite')
+        y = self.temporal(y)
+
         # concatenates the different inputs and categorizes features across all stocks
-        # tf.debugging.assert_all_finite(scaled_e, 'scaled equity not finite')
-        # tf.debugging.assert_all_finite(scaled_p, 'scaled prices not finite')
         concat = tf.keras.layers.concatenate((x, scaled_e, y, scaled_p))
-        # tf.debugging.assert_all_finite(concat, 'concat output not finite')
         main = self.common(concat)
-        # tf.debugging.assert_all_finite(main, 'main network not finite')
         # value network
         value = self.critic(main)
         if val_only:
@@ -247,23 +204,15 @@ class Trader(tf.keras.Model):
 
         # actor network
         mu, L = self.actor((main, lb, ub))
-        # tf.print(tf.reduce_min(tf.linalg.diag_part(L)))
-        # tf.debugging.assert_all_finite(mu, 'action means not finite??')
         mu = self.convert_to_nshares((mu, p))
 
         L = tf.matmul(tf.math.divide_no_nan(tf.constant(1.0, dtype=tf.float32), tf.linalg.diag(p)), L)
         L_epsilon = tf.linalg.eye(mu.shape[-1], dtype=tf.float32) * constants.l_epsilon
         L = L + L_epsilon
 
-        # tf.debugging.assert_positive(c, message='negative capital')
-        # tf.debugging.assert_non_negative(e,message='negative equity')
-
-        # tf.debugging.assert_all_finite(L, 'got non finite L')
-
         # limiting the mean actions to be in bounds
         mu = self.buy_limiter((mu, c, p))
         final_mu = self.clip_selling((mu, -e))
-        # tf.print(tf.reduce_min(e + final_mu))
 
         if dist_features:
             return final_mu, L, value
@@ -272,8 +221,6 @@ class Trader(tf.keras.Model):
         dist = MVN(loc=final_mu, scale_tril=L)
         raw_action = dist.sample()
 
-        # dist2 = MVN(loc = final_mu, scale_tril = L)
-        # tf.print(tf.cast(dist2.log_prob(raw_action),tf.int32))
         # ensuring that sample is also in bounds
         action = self.buy_limiter((raw_action, c, p))
         action = self.clip_selling((action, -e))
@@ -300,62 +247,75 @@ class Trader(tf.keras.Model):
         return vpreds
 
     @staticmethod
-    def make_temporal_DNN(hp):
+    def make_temporal_DNN(output_shape, hp):
 
         architecture = hp.Choice('temporal_nn_type', ['Conv1D', 'LSTM'], default='Conv1D')
         bidirectional = hp.Choice('Bidirectional LSTM', [True, False], default=True)
+        separated_post_conv = hp.Choice('separated_post_conv', [True, False], default = True)
         model = tf.keras.Sequential(name='temporal_network')
         input_len = hp.Int('input_days', min_value=60, max_value=120, step=10,
-                           default=100)  # correct defaule 80 #min_value= 10, max_value = 120, step = 10, default = 80)
+                           default=120)  # correct defaule 80
 
         conv_filters = []
         conv_kernel_sizes = []
+        repeats = []
         paddings = []
         input_len_tracker = input_len
         max_kernel_size = 12
-        max_conv_layers = 6
+        max_conv_layers = 5
         conv_layers = False
         for n in range(max_conv_layers):
-            conv_filters.append(hp.Int(f'conv{n}_filters', min_value=16, max_value=2 ** (n + 6) // (n + 2), step=16,
-                                       default=2 ** (n + 6) // (n + 2)))
+            conv_filters.append(hp.Int(f'conv{n}_filters', min_value=16 + 8*n, max_value=32+8*n**2,
+                                       step=16, default=32+8*n**2)) # 2 ** (n + 6) // (n + 2)
             conv_kernel_sizes.append(
                 hp.Int(f'conv{n}_kernel_size', min_value=2, max_value=max_kernel_size, default=max_kernel_size))
+            repeats.append(hp.Choice(f'conv{n}_repeats', values=[0,1], default=1)) #1*(1<n<5)
             paddings.append(hp.Choice(f'conv{n}_padding', ['valid', 'same'], default='same'))
             if paddings[n] == 'same':
                 input_len_tracker = input_len_tracker // 2
             else:
                 input_len_tracker = (input_len_tracker - conv_kernel_sizes[n] + 1) // 2
-            if max_kernel_size >= input_len_tracker and conv_layers == False:
+            if max_kernel_size >= input_len_tracker and not conv_layers:
                 conv_layers = n + 1
             max_kernel_size -= 3 - (n + 1) // 2
 
+        separated_dense_units = hp.Int('separate_post_conv_units', min_value = 8*output_shape,
+                                       max_value = 16*output_shape, step = 8, default = 16*output_shape)
+
         postconv_units = []
-        max_postconv_layers = 4
+        max_postconv_layers = 3
         for n in range(max_postconv_layers):
             postconv_units.append(
-                hp.Int(f'postconv{n}_units', min_value=32, max_value=512, step=32, default=256 // 2**n))  # 256 // 2**n
-        postconv_layers = hp.Int('postconv_fc_layers', min_value=0, max_value=4, default=4)  # 2
+                hp.Int(f'postconv{n}_units', min_value=32, max_value=192, step=32, default=192))  # 256 // 2**n
+        postconv_layers = hp.Int(
+            'postconv_fc_layers', min_value=0, max_value=max_postconv_layers, default=max_postconv_layers)  # 2
 
         max_lstm_layers = 4
         lstm_layers = hp.Int('lstm_layers', min_value=1, max_value=max_lstm_layers, default=max_lstm_layers)  # 3
         lstm_units = []
         for n in range(max_lstm_layers):
             lstm_units.append(hp.Int(f'lstm{n}_units', min_value=32, max_value=96, step=8,
-                                     default=100))  # 128 # (256*(n-4)*(n+1))//6
+                                     default=96))
         if bidirectional:
             for n in range(max_lstm_layers - 1):
                 lstm_units[n] = lstm_units[n] // 2
 
         if architecture == 'Conv1D':
             for n in range(conv_layers):
+                for _ in range(repeats[n]):
+                    model.add(Conv1D(conv_filters[n], conv_kernel_sizes[n], padding='same', activation=swish))
                 model.add(Conv1D(conv_filters[n], conv_kernel_sizes[n], padding=paddings[n], activation=swish))
-                if n == 0 or n == conv_layers - 1: model.add(MaxPool2D(pool_size=(1, 2), strides=(1, 2)))
+                model.add(MaxPool2D(pool_size=(1, 2), strides=(1, 2)))
+
+            if separated_post_conv:
+                # flatten length and channels
+                model.add(Lambda(lambda x: tf.reshape(x, tuple(tf.unstack(tf.shape(x)[:-2])) + (-1,))))
+                # dense layer applied separately for each stock
+                model.add(Dense(separated_dense_units, activation = swish))
 
             model.add(tf.keras.layers.Flatten())
             for n in range(postconv_layers):
                 model.add(Dense(postconv_units[n], activation=swish))
-                # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3,
-                # parent_name = 'temporal_nn_type', parent_values = ['Conv1D']), hp, name = f'dropout{n}'))
 
         else:
             # transpose so that time dimension is first (after batch)
@@ -371,18 +331,6 @@ class Trader(tf.keras.Model):
             final_units = lstm_units[-1]
             model.add(LSTM(final_units, name='last_temporal'))
 
-        # model.add(Conv1D(32, 5, activation = swish))
-        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        # model.add(Conv1D(64, 5, activation = swish))
-        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        # model.add(Conv1D(128, 5, activation = swish))
-        # model.add(MaxPool2D(pool_size = (1,2), strides = (1,2)))
-        # model.add(tf.keras.layers.Flatten())
-        # model.add(Dense(128, activation = swish))
-        # model.add(deterministic_dropout(hp.Choice('p_drop1', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
-        # model.add(Dense(100, activation = swish))
-        # model.add(deterministic_dropout(hp.Choice('p_drop2', [0.0, 0.1, 0.3, 0.6], default = 0.3)))
-        # model.add(Dense(64, activation = swish))
         return model
 
     @staticmethod
@@ -395,8 +343,8 @@ class Trader(tf.keras.Model):
         """
         model = tf.keras.Sequential(name='autoencoder')
         model.add(tf.keras.layers.Flatten())
-        for n in range(hp.Int('mlp_layers', min_value=1, max_value=3, default=2)):
-            units = hp.Int(f'mlp{n}_units', min_value=8, max_value=64, step=8, default=32 // 2 ** n)
+        for n in range(hp.Int('mlp_layers', min_value=1, max_value=3, default=3)): #2
+            units = hp.Int(f'mlp{n}_units', min_value=8, max_value=64, step=8, default=64) # 32 // 2 ** n
             model.add(Dense(units, activation=swish, name=f'autoencoder_{n}'))
 
         return model
@@ -411,15 +359,13 @@ class Trader(tf.keras.Model):
 
     def make_common_dense(self, output_shape, hp):
         model = tf.keras.Sequential(name='common')
-        for n in range(hp.Int('common_layers', min_value=1, max_value=3, default=2)):
-            units = hp.Int(f'common{n}_units', min_value=16, max_value=128, step=16, default=128 // 2 ** n)
+        for n in range(hp.Int('common_layers', min_value=1, max_value=3, default=3)): # 2
+            units = hp.Int(f'common{n}_units', min_value=16, max_value=128, step=16, default=128) # 128 // 2 ** n
             model.add(Dense(output_shape * units, activation=swish, name=f'common{n}'))
         return model, (output_shape * units,)
 
     @staticmethod
     def make_actor(input_shape, num_outputs, shapers, hp):
-        def scale(unscaled, lb, ub):
-            return unscaled * (ub - lb) - lb
 
         gen_cholesky, clip_z = shapers
 
@@ -427,13 +373,13 @@ class Trader(tf.keras.Model):
         lb, ub = (tf.keras.Input(shape=(num_outputs,)), tf.keras.Input(shape=(1,)))
         inputs = (input_main, lb, ub)
         hidden_input = input_main
-        n_hidden_layers = hp.Int('n_actor_hidden_layers', min_value=1, max_value=4, default=1)
+        n_hidden_layers = hp.Int('n_actor_hidden_layers', min_value=1, max_value=4, default=4) # 1
         for n_layer in range(n_hidden_layers):
             latest_hidden = Dense(
-                num_outputs * hp.Int(f'actor_hidden{n_layer}_units', min_value=2, max_value=16, step=2, default=8),
+                num_outputs * hp.Int(f'actor_hidden{n_layer}_units', min_value=2, max_value=16, step=2, default=16), # 8
                 activation=swish, name=f'actor_common{n_layer}')(hidden_input)
             hidden_input = latest_hidden
-        mu_hidden = Dense(num_outputs * hp.Int('mu_hidden_units', min_value=2, max_value=16, step=2, default=4),
+        mu_hidden = Dense(num_outputs * hp.Int('mu_hidden_units', min_value=2, max_value=16, step=2, default=16), # 4
                           activation=swish, name='mu_hidden')(latest_hidden)
 
         # get means bound near the observation space
@@ -441,23 +387,23 @@ class Trader(tf.keras.Model):
         sell_mu = Dense(num_outputs, activation=swish, name='mu_sells')(mu_hidden)
         unscaled_mu = tf.where(buy_mu > sell_mu, buy_mu,
                                - sell_mu)  # choose bias based on absolute value of buy vs sell
-        # unscaled_mu = buy_mu - sell_mu
-        # unscaled_mu = unscaled_mu + constants.MIN_SWISH #min(swish(x)) = -0.278464..., we need output >= 0
-        mu = unscaled_mu * (ub - lb)
+        mu = unscaled_mu * tf.where(unscaled_mu > 0, ub, lb)
 
         # generate lower triangle scale matrix
         z_vec = Dense(num_outputs * (num_outputs - 1) / 2, activation='tanh', name='z_layer')(latest_hidden)
         z_vec_clipped = clip_z(z_vec)
         std_vec = Dense(num_outputs, activation=swish, name='stdev_layer')(latest_hidden)
-        # std_vec = std_vec + constants.MIN_SWISH # diagonal part has to be positive
-        # clip std between 0 and range of possible actions * l_scale_hparam
         l_scale = hp.Float('std_scale', min_value=0.1, max_value=5., sampling='log', default=constants.l_scale)
         std_vec = tfp.math.clip_by_value_preserve_gradient(std_vec, 0.0, 1.0) * (ub - lb) * l_scale
 
         # shape the vectors into a lower triangular matrix
-        L = gen_cholesky(z_vec_clipped)
+        if constants.FULL_RANK_COVARIANCE:
+           L = gen_cholesky(z_vec_clipped)
         W = tf.linalg.diag(std_vec)  # rescale from L_correlation to L_covariance, units capital
-        L = tf.matmul(W, L)
+        if constants.FULL_RANK_COVARIANCE:
+            L = tf.matmul(W, L)
+        else:
+            L = W
         outputs = (mu, L)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name='actor_fc_network')
@@ -470,11 +416,9 @@ class Trader(tf.keras.Model):
     @staticmethod
     @tf.custom_gradient
     def clip_by_value_reverse_gradient(inputs):
-        # tf.debugging.assert_all_finite(inputs, 'unclipped z not finite??')
         ub = tf.cast(constants.TANH_UB, tf.float32)
         out = tf.clip_by_value(inputs, -ub, ub)
 
-        # tf.debugging.assert_all_finite(out, 'clipped z not finite??')
         def grad(dy):
             return tf.where(tf.math.logical_or(inputs <= -ub, inputs >= ub), -dy, dy)
 
@@ -501,6 +445,7 @@ class Trader(tf.keras.Model):
         return tf.math.divide_no_nan((inputs - means), stdevs)
 
 
+# wrapper to the model for keras_tuner
 class HyperTrader(kt.HyperModel):
     def __init__(self, out_shape, close_idx):
         super(HyperTrader, self).__init__()

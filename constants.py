@@ -5,11 +5,13 @@ Created on Fri Oct 23 16:01:11 2020
 @author: Aapo Kössi
 """
 # this is where the magic numbers live :D
+# window length must stay constant from preprocessing to training, other variables can be adjusted to train
+# different models
+
 import string
 
 MIN_DAYS_AVLB = [1500, 250, 250]
 MIN_AVG_VOL = 5e4
-# MIN_MIN_VOL = 5e3
 DEFAULT_TICKERS = 10
 NUM_MODELS = 1
 VAL_TIME = 2*360
@@ -44,6 +46,7 @@ T_MUL = 2.0
 M_MUL = 1.5
 LR_ALPHA = 1e-3
 EP_SHUFFLE_BUF = 256
+FULL_RANK_COVARIANCE = False
 SPLIT_LABELS = ['train','eval','test']
 
 
